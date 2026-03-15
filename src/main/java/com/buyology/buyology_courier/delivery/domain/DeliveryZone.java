@@ -1,14 +1,13 @@
 package com.buyology.buyology_courier.delivery.domain;
 
-import jakarta.persistence.*;
 import lombok.*;
+import java.util.UUID;
+import java.time.Instant;
+import java.math.BigDecimal;
+import jakarta.persistence.*;
+import org.locationtech.jts.geom.Geometry;
 import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.UpdateTimestamp;
-import org.locationtech.jts.geom.Geometry;
-
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.util.UUID;
 
 @Entity
 @Table(

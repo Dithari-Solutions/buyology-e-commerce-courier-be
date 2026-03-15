@@ -33,6 +33,12 @@ public class Courier {
     @Column(name = "id", updatable = false, nullable = false)
     private UUID id;
 
+    // Optimistic locking — detects concurrent updates and throws ObjectOptimisticLockingFailureException
+    // instead of silently overwriting another writer's changes
+    @Version
+    @Column(name = "version", nullable = false)
+    private Long version;
+
     @Column(name = "first_name", length = 100, nullable = false)
     private String firstName;
 
