@@ -71,7 +71,7 @@ class CourierServiceImplTest {
             var request = CreateCourierRequest.builder()
                     .firstName("Ada").lastName("Lovelace")
                     .phone("+1234567890").email("ada@test.com")
-                    .vehicleType(VehicleType.BIKE)
+                    .vehicleType(VehicleType.BICYCLE)
                     .build();
 
             var saved = courierFixture();
@@ -95,7 +95,7 @@ class CourierServiceImplTest {
         void throws_DuplicatePhoneException_when_phone_taken() {
             var request = CreateCourierRequest.builder()
                     .firstName("Ada").lastName("Lovelace")
-                    .phone("+1234567890").vehicleType(VehicleType.BIKE).build();
+                    .phone("+1234567890").vehicleType(VehicleType.BICYCLE).build();
 
             when(courierRepository.existsByPhoneAndDeletedAtIsNull(request.phone())).thenReturn(true);
 
@@ -288,7 +288,7 @@ class CourierServiceImplTest {
                 .id(UUID.randomUUID())
                 .firstName("Ada").lastName("Lovelace")
                 .phone("+1234567890").email("ada@test.com")
-                .vehicleType(VehicleType.BIKE)
+                .vehicleType(VehicleType.BICYCLE)
                 .status(CourierStatus.ACTIVE)
                 .isAvailable(true)
                 .build();

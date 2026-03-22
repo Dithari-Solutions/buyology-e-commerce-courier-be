@@ -64,7 +64,7 @@ class CourierControllerTest {
     void create_returns_201() throws Exception {
         var request = CreateCourierRequest.builder()
                 .firstName("Ada").lastName("Lovelace")
-                .phone("+1234567890").vehicleType(VehicleType.BIKE).build();
+                .phone("+1234567890").vehicleType(VehicleType.BICYCLE).build();
 
         when(courierService.create(any())).thenReturn(courierResponse());
 
@@ -92,7 +92,7 @@ class CourierControllerTest {
     void create_returns_400_when_profileImageUrl_invalid() throws Exception {
         String body = """
                 {"firstName":"Ada","lastName":"Lovelace","phone":"+123",
-                 "vehicleType":"BIKE","profileImageUrl":"not-a-url"}
+                 "vehicleType":"BICYCLE","profileImageUrl":"not-a-url"}
                 """;
 
         mockMvc.perform(post("/api/v1/couriers")
@@ -166,7 +166,7 @@ class CourierControllerTest {
     private CourierResponse courierResponse() {
         return new CourierResponse(
                 COURIER_ID, "Ada", "Lovelace", "+1234567890", "ada@test.com",
-                VehicleType.BIKE, CourierStatus.ACTIVE, true,
+                VehicleType.BICYCLE, CourierStatus.ACTIVE, true,
                 new BigDecimal("4.8"), null, Instant.now(), Instant.now()
         );
     }

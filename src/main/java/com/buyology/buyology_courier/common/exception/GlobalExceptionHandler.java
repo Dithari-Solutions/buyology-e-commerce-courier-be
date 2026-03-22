@@ -1,5 +1,12 @@
 package com.buyology.buyology_courier.common.exception;
 
+import com.buyology.buyology_courier.auth.exception.AccountLockedException;
+import com.buyology.buyology_courier.auth.exception.AccountNotActiveException;
+import com.buyology.buyology_courier.auth.exception.AccountSuspendedException;
+import com.buyology.buyology_courier.auth.exception.DrivingLicenseRequiredException;
+import com.buyology.buyology_courier.auth.exception.InvalidCredentialsException;
+import com.buyology.buyology_courier.auth.exception.TokenExpiredException;
+import com.buyology.buyology_courier.auth.exception.TokenRevokedException;
 import com.buyology.buyology_courier.courier.exception.*;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
@@ -38,6 +45,46 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleLocationNotFound(
             CourierLocationNotFoundException ex, HttpServletRequest req) {
         return response(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage(), req);
+    }
+
+    // ── 401 Auth-specific ─────────────────────────────────────────────────────
+
+    @ExceptionHandler(InvalidCredentialsException.class)
+    public ResponseEntity<ErrorResponse> handleInvalidCredentials(
+            InvalidCredentialsException ex, HttpServletRequest req) {
+        return response(HttpStatus.UNAUTHORIZED, "Unauthorized", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler({TokenExpiredException.class, TokenRevokedException.class})
+    public ResponseEntity<ErrorResponse> handleInvalidToken(
+            RuntimeException ex, HttpServletRequest req) {
+        return response(HttpStatus.UNAUTHORIZED, "Unauthorized", ex.getMessage(), req);
+    }
+
+    // ── 403 Auth-specific ─────────────────────────────────────────────────────
+
+    @ExceptionHandler(AccountLockedException.class)
+    public ResponseEntity<ErrorResponse> handleAccountLocked(
+            AccountLockedException ex, HttpServletRequest req) {
+        return response(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(AccountSuspendedException.class)
+    public ResponseEntity<ErrorResponse> handleAccountSuspended(
+            AccountSuspendedException ex, HttpServletRequest req) {
+        return response(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(AccountNotActiveException.class)
+    public ResponseEntity<ErrorResponse> handleAccountNotActive(
+            AccountNotActiveException ex, HttpServletRequest req) {
+        return response(HttpStatus.FORBIDDEN, "Forbidden", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(DrivingLicenseRequiredException.class)
+    public ResponseEntity<ErrorResponse> handleDrivingLicenseRequired(
+            DrivingLicenseRequiredException ex, HttpServletRequest req) {
+        return response(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req);
     }
 
     // ── 409 Conflict ──────────────────────────────────────────────────────────

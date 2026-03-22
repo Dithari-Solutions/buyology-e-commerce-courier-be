@@ -2,23 +2,30 @@ package com.buyology.buyology_courier.config;
 
 import com.buyology.buyology_courier.common.exception.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nimbusds.jwt.JWTParser;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.AuthenticationManagerResolver;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationConverter;
+import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationProvider;
 import org.springframework.security.oauth2.server.resource.authentication.JwtGrantedAuthoritiesConverter;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Arrays;
 import java.util.List;
 
@@ -32,10 +39,17 @@ public class SecurityConfig {
     @Value("${cors.allowed-origins:http://localhost:3000}")
     private String allowedOrigins;
 
+    // Must match auth.jwt.issuer in application.properties
+    @Value("${auth.jwt.issuer:buyology-courier-service}")
+    private String courierIssuer;
+
     private final ObjectMapper objectMapper;
 
     @Bean
-    SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    SecurityFilterChain securityFilterChain(
+            HttpSecurity http,
+            AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver
+    ) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(cors -> cors.configurationSource(corsConfigurationSource()))
@@ -44,17 +58,21 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         // Kubernetes liveness / readiness probes — must be public
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
-                        // All other actuator endpoints require ADMIN — they expose internal topology
+                        // All other actuator endpoints require ADMIN
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         // OpenAPI / Swagger UI — public in dev, restrict in prod via profile
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        // Courier auth endpoints — public (login, refresh, logout)
+                        .requestMatchers(
+                                "/api/auth/courier/login",
+                                "/api/auth/courier/refresh",
+                                "/api/auth/courier/logout"
+                        ).permitAll()
                         .anyRequest().authenticated()
                 )
                 .oauth2ResourceServer(oauth2 -> oauth2
-                        .jwt(jwt -> jwt.jwtAuthenticationConverter(jwtAuthenticationConverter()))
-                        // Spring Security handles 401/403 before DispatcherServlet, so
-                        // GlobalExceptionHandler never sees them. Configure here so responses
-                        // use the same ErrorResponse format as all other errors.
+                        // Routes JWT validation to the correct decoder based on the token issuer
+                        .authenticationManagerResolver(jwtAuthManagerResolver)
                         .authenticationEntryPoint((request, response, ex) -> {
                             response.setStatus(401);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
@@ -71,6 +89,34 @@ public class SecurityConfig {
                         })
                 )
                 .build();
+    }
+
+    /**
+     * Routes incoming JWTs to either the courier decoder (HMAC-SHA256, self-issued)
+     * or the Keycloak decoder (RSA, admin tokens), based on the {@code iss} claim.
+     *
+     * Reading the {@code iss} claim without verification is safe here because the
+     * claim is only used to choose a decoder — the chosen decoder then performs full
+     * cryptographic validation.
+     */
+    @Bean
+    AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver(
+            @Qualifier("courierJwtDecoder") NimbusJwtDecoder courierDecoder,
+            @Qualifier("keycloakJwtDecoder") JwtDecoder keycloakDecoder
+    ) {
+        JwtAuthenticationProvider courierProvider = new JwtAuthenticationProvider(courierDecoder);
+        courierProvider.setJwtAuthenticationConverter(jwtAuthenticationConverter());
+
+        JwtAuthenticationProvider keycloakProvider = new JwtAuthenticationProvider(keycloakDecoder);
+        keycloakProvider.setJwtAuthenticationConverter(jwtAuthenticationConverter());
+
+        return request -> {
+            String token = extractBearerToken(request);
+            if (token != null && isCourierToken(token)) {
+                return courierProvider::authenticate;
+            }
+            return keycloakProvider::authenticate;
+        };
     }
 
     @Bean
@@ -99,11 +145,7 @@ public class SecurityConfig {
     @Bean
     JwtAuthenticationConverter jwtAuthenticationConverter() {
         // Expects JWT claims: { "roles": ["ADMIN", "COURIER"], "sub": "<courier-uuid>" }
-        // IMPORTANT: the JWT 'sub' claim must be the courier's UUID.
-        // This is set during registration when the OAuth2 identity is linked to the courier
-        // record. If your identity provider (e.g. Keycloak) uses a different claim for the
-        // user ID, update authentication.getName() in CourierSecurityService.isOwner()
-        // accordingly. A misconfigured sub claim causes ownership checks to silently fail.
+        // Works for BOTH Keycloak admin tokens and courier-issued tokens — both use "roles" claim.
         JwtGrantedAuthoritiesConverter authoritiesConverter = new JwtGrantedAuthoritiesConverter();
         authoritiesConverter.setAuthoritiesClaimName("roles");
         authoritiesConverter.setAuthorityPrefix("ROLE_");
@@ -111,5 +153,28 @@ public class SecurityConfig {
         JwtAuthenticationConverter converter = new JwtAuthenticationConverter();
         converter.setJwtGrantedAuthoritiesConverter(authoritiesConverter);
         return converter;
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    private String extractBearerToken(HttpServletRequest request) {
+        String header = request.getHeader("Authorization");
+        if (header != null && header.startsWith("Bearer ")) {
+            return header.substring(7).trim();
+        }
+        return null;
+    }
+
+    /**
+     * Read the {@code iss} claim WITHOUT signature verification to decide which
+     * decoder to use. The actual verification happens inside the chosen provider.
+     */
+    private boolean isCourierToken(String token) {
+        try {
+            String iss = (String) JWTParser.parse(token).getJWTClaimsSet().getClaim("iss");
+            return courierIssuer.equals(iss);
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

@@ -1,0 +1,44 @@
+{
+  "properties": [
+    {
+      "name": "cors.allowed-origins",
+      "type": "java.lang.String",
+      "description": "Comma-separated list of allowed CORS origins (e.g. https://app.buyology.com,https://ops.buyology.com)."
+    },
+    {
+      "name": "outbox.poll-interval-ms",
+      "type": "java.lang.Long",
+      "description": "How often (in milliseconds) the outbox publisher job polls for PENDING events."
+    },
+    {
+      "name": "location.retention-days",
+      "type": "java.lang.Integer",
+      "description": "Number of days to retain courier location history before the cleanup job purges old rows."
+    },
+    {
+      "name": "location.cleanup-cron",
+      "type": "java.lang.String",
+      "description": "Cron expression for the location history cleanup job (Spring cron format)."
+    },
+    {
+      "name": "auth.jwt.secret",
+      "type": "java.lang.String",
+      "description": "HMAC-SHA256 secret for signing and verifying courier-issued JWTs. Must be at least 32 characters. Override AUTH_JWT_SECRET in production."
+    },
+    {
+      "name": "auth.jwt.issuer",
+      "type": "java.lang.String",
+      "description": "Issuer claim (iss) embedded in courier-issued JWTs. Used to route token validation away from Keycloak."
+    },
+    {
+      "name": "auth.jwt.access-token-expiry-seconds",
+      "type": "java.lang.Long",
+      "description": "Access token TTL in seconds. Default: 900 (15 minutes)."
+    },
+    {
+      "name": "auth.jwt.refresh-token-expiry-seconds",
+      "type": "java.lang.Long",
+      "description": "Refresh token TTL in seconds. Default: 2592000 (30 days)."
+    }
+  ]
+}
