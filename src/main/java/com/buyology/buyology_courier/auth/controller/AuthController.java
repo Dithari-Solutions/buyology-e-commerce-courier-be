@@ -1,10 +1,12 @@
 package com.buyology.buyology_courier.auth.controller;
 
+import com.buyology.buyology_courier.auth.domain.enums.AdminAction;
 import com.buyology.buyology_courier.auth.dto.request.CourierLoginRequest;
 import com.buyology.buyology_courier.auth.dto.request.CourierSignupRequest;
 import com.buyology.buyology_courier.auth.dto.request.RefreshTokenRequest;
 import com.buyology.buyology_courier.auth.dto.response.AuthResponse;
 import com.buyology.buyology_courier.auth.dto.response.CourierSignupResponse;
+import com.buyology.buyology_courier.auth.service.AdminAuditService;
 import com.buyology.buyology_courier.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -25,24 +27,44 @@ import java.util.UUID;
 @Tag(name = "Auth", description = "Courier authentication — login, token refresh, logout. Admin signup.")
 public class AuthController {
 
-    private final AuthService authService;
+    private final AuthService       authService;
+    private final AdminAuditService adminAuditService;
 
     // ── Admin: create courier with credentials ─────────────────────────────────
 
+    /**
+     * ROLE_COURIER_ADMIN is the least-privilege role for courier management.
+     * ROLE_ADMIN (Keycloak super-admin) is also accepted for backward compatibility,
+     * but Keycloak should be configured to grant ROLE_COURIER_ADMIN to ops staff
+     * rather than full ROLE_ADMIN.
+     */
     @PostMapping("/admin/couriers")
     @ResponseStatus(HttpStatus.CREATED)
-    @PreAuthorize("hasRole('ADMIN')")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
     @Operation(
             summary = "Register a new courier (admin only)",
             description = "Creates the courier profile, credentials, and vehicle details in one transaction. "
-                    + "Driving licence fields are required when vehicleType is SCOOTER or CAR."
+                    + "Driving licence fields are required when vehicleType is SCOOTER or CAR. "
+                    + "Requires ROLE_COURIER_ADMIN or ROLE_ADMIN."
     )
     public CourierSignupResponse signup(
             @Valid @RequestBody CourierSignupRequest request,
-            @AuthenticationPrincipal Jwt jwt
+            @AuthenticationPrincipal Jwt jwt,
+            HttpServletRequest httpRequest
     ) {
         UUID adminId = UUID.fromString(jwt.getSubject());
-        return authService.signup(request, adminId);
+        CourierSignupResponse response = authService.signup(request, adminId);
+
+        // Audit log written in a separate transaction after the main one commits
+        adminAuditService.log(
+                AdminAction.COURIER_CREATED,
+                response.courierId(),
+                "{\"vehicleType\":\"" + request.vehicleType() + "\","
+                        + "\"requiresDrivingLicense\":" + response.requiresDrivingLicense() + "}",
+                httpRequest
+        );
+
+        return response;
     }
 
     // ── Courier: login ─────────────────────────────────────────────────────────
@@ -67,8 +89,7 @@ public class AuthController {
     @PostMapping("/courier/refresh")
     @Operation(
             summary = "Refresh access token",
-            description = "Exchange a valid refresh token for a new access JWT. "
-                    + "The refresh token itself is not rotated."
+            description = "Exchange a valid refresh token for a new access JWT."
     )
     public AuthResponse refresh(@Valid @RequestBody RefreshTokenRequest request) {
         return authService.refresh(request);
@@ -92,7 +113,6 @@ public class AuthController {
     private String resolveClientIp(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");
         if (forwarded != null && !forwarded.isBlank()) {
-            // X-Forwarded-For may contain a comma-separated list; take the first (client)
             return forwarded.split(",")[0].trim();
         }
         return request.getRemoteAddr();

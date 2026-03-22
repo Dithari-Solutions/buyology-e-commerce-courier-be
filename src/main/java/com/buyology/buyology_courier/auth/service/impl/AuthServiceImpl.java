@@ -29,10 +29,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.UUID;
 
@@ -46,6 +48,8 @@ public class AuthServiceImpl implements AuthService {
     private static final int MAX_FAILED_ATTEMPTS = 5;
     // Lockout duration in minutes
     private static final int LOCKOUT_MINUTES = 15;
+    // Admin rate limit: max courier creations per admin per hour
+    private static final int MAX_ADMIN_SIGNUPS_PER_HOUR = 50;
 
     private final CourierRepository               courierRepository;
     private final CourierCredentialsRepository    credentialsRepository;
@@ -55,6 +59,7 @@ public class AuthServiceImpl implements AuthService {
     private final PasswordEncoder                 passwordEncoder;
     private final JwtService                      jwtService;
     private final ObjectMapper                    objectMapper;
+    private final StringRedisTemplate             stringRedisTemplate;
 
     @Value("${auth.jwt.access-token-expiry-seconds:900}")
     private long accessTokenExpirySeconds;
@@ -64,6 +69,9 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public CourierSignupResponse signup(CourierSignupRequest request, UUID adminId) {
+        // Rate limit: prevent a compromised admin account from bulk-creating couriers
+        enforceAdminSignupRateLimit(adminId);
+
         // Phone must be globally unique (couriers table has a unique constraint on phone)
         if (courierRepository.existsByPhoneAndDeletedAtIsNull(request.phone())) {
             throw new DuplicatePhoneException(request.phone());
@@ -276,6 +284,25 @@ public class AuthServiceImpl implements AuthService {
         refreshTokenRepository.save(token);
 
         return new AuthResponse(accessToken, rawRefresh, accessTokenExpirySeconds, courierId);
+    }
+
+    /**
+     * Rate-limits admin signup operations per admin ID per hour using a Redis counter.
+     * Prevents a stolen admin token from being used to bulk-register fake couriers.
+     * Key TTL is set on first increment so the window resets automatically.
+     */
+    private void enforceAdminSignupRateLimit(UUID adminId) {
+        String key   = "admin_rate:courier_create:" + adminId;
+        Long   count = stringRedisTemplate.opsForValue().increment(key);
+        if (count != null && count == 1) {
+            stringRedisTemplate.expire(key, Duration.ofHours(1));
+        }
+        if (count != null && count > MAX_ADMIN_SIGNUPS_PER_HOUR) {
+            log.warn("Admin signup rate limit exceeded: adminId={}", adminId);
+            throw new com.buyology.buyology_courier.courier.exception.RateLimitExceededException(
+                    "Too many courier registrations. Maximum " + MAX_ADMIN_SIGNUPS_PER_HOUR
+                            + " per hour per admin.");
+        }
     }
 
     private void saveOutboxEvent(String routingKey, Object event) {

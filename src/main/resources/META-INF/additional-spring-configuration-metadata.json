@@ -39,6 +39,16 @@
       "name": "auth.jwt.refresh-token-expiry-seconds",
       "type": "java.lang.Long",
       "description": "Refresh token TTL in seconds. Default: 2592000 (30 days)."
+    },
+    {
+      "name": "auth.admin.jwt.audience",
+      "type": "java.lang.String",
+      "description": "Expected `aud` claim value in Keycloak admin JWTs. Tokens missing this audience are rejected. Must match the Audience mapper configured in Keycloak for the buyology-courier-service client."
+    },
+    {
+      "name": "management.tracing.sampling.probability",
+      "type": "java.lang.Double",
+      "description": "Fraction of requests to sample for distributed tracing (0.0–1.0). Use 1.0 in dev, 0.1 in prod."
     }
   ]
 }

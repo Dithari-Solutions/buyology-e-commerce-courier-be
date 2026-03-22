@@ -8,6 +8,7 @@ import com.buyology.buyology_courier.courier.dto.request.UpdateCourierStatusRequ
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
 import com.buyology.buyology_courier.courier.exception.CourierNotFoundException;
 import com.buyology.buyology_courier.courier.exception.RateLimitExceededException;
+import com.buyology.buyology_courier.auth.service.AdminAuditService;
 import com.buyology.buyology_courier.courier.security.CourierSecurityService;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -43,6 +44,7 @@ class CourierControllerTest {
 
     @Mock CourierService         courierService;
     @Mock CourierSecurityService courierSecurity;
+    @Mock AdminAuditService      adminAuditService;
 
     private MockMvc    mockMvc;
     private ObjectMapper objectMapper;
@@ -53,7 +55,7 @@ class CourierControllerTest {
         objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new CourierController(courierService))
+                .standaloneSetup(new CourierController(courierService, adminAuditService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
