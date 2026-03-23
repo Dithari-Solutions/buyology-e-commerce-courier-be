@@ -3,7 +3,6 @@ package com.buyology.buyology_courier.config;
 import com.buyology.buyology_courier.common.exception.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nimbusds.jwt.JWTParser;
-import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -32,7 +31,6 @@ import java.util.List;
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@RequiredArgsConstructor
 public class SecurityConfig {
 
     // Comma-separated origins: CORS_ALLOWED_ORIGINS=https://app.buyology.com,https://ops.buyology.com
@@ -43,8 +41,6 @@ public class SecurityConfig {
     @Value("${auth.jwt.issuer:buyology-courier-service}")
     private String courierIssuer;
 
-    private final ObjectMapper objectMapper;
-
     @Bean
     ObjectMapper objectMapper() {
         return new ObjectMapper();
@@ -53,7 +49,8 @@ public class SecurityConfig {
     @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
-            AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver
+            AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver,
+            ObjectMapper objectMapper
     ) throws Exception {
         return http
                 .csrf(AbstractHttpConfigurer::disable)
