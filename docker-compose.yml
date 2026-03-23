@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -59,9 +59,7 @@ services:
   # ── Courier service ───────────────────────────────────────────────────────────
   courier:
     image: ${IMAGE_TAG:-buyology-courier:local}
-    build:
-      context: .
-      condition: "service_image_not_found"
+    build: .
     container_name: buyology-courier
     env_file:
       - .env
