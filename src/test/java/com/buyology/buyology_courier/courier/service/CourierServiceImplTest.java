@@ -203,8 +203,8 @@ class CourierServiceImplTest {
         @Test
         void throws_CourierNotFoundException_when_courier_deleted_between_cache_and_save() {
             UUID id = UUID.randomUUID();
-            // Cache says active
-            doNothing().when(courierLookupService).requireActive(id);
+            // Cache says active (requireActive returns boolean, not void)
+            when(courierLookupService.requireActive(id)).thenReturn(true);
             // But DB check within the transaction finds it deleted
             when(courierRepository.existsByIdAndDeletedAtIsNull(id)).thenReturn(false);
 
@@ -237,7 +237,8 @@ class CourierServiceImplTest {
             CourierLocationResponse result = service.recordLocation(courier.getId(), locationRequest());
 
             assertThat(result.courierId()).isEqualTo(courier.getId());
-            verify(eventPublisher).publishEvent(any());
+            // publishEvent(Object) overload — use any(Object.class) to target the correct overload
+            verify(eventPublisher).publishEvent(any(Object.class));
         }
 
         private RecordLocationRequest locationRequest() {
@@ -255,27 +256,23 @@ class CourierServiceImplTest {
 
         @Test
         void throws_when_from_is_after_to() {
-            var courier = courierFixture();
-            when(courierRepository.findByIdAndDeletedAtIsNull(courier.getId()))
-                    .thenReturn(Optional.of(courier));
-
+            // Validation fires before any repo call — no stub needed
+            UUID id = UUID.randomUUID();
             Instant now = Instant.now();
             assertThatThrownBy(() ->
-                    service.getLocationHistory(courier.getId(), now, now.minusSeconds(1), null))
+                    service.getLocationHistory(id, now, now.minusSeconds(1), null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("'from' must be before 'to'");
         }
 
         @Test
         void throws_when_range_exceeds_7_days() {
-            var courier = courierFixture();
-            when(courierRepository.findByIdAndDeletedAtIsNull(courier.getId()))
-                    .thenReturn(Optional.of(courier));
-
+            // Validation fires before any repo call — no stub needed
+            UUID id = UUID.randomUUID();
             Instant from = Instant.now().minusSeconds(8 * 24 * 3600);
             Instant to   = Instant.now();
             assertThatThrownBy(() ->
-                    service.getLocationHistory(courier.getId(), from, to, null))
+                    service.getLocationHistory(id, from, to, null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("7 days");
         }

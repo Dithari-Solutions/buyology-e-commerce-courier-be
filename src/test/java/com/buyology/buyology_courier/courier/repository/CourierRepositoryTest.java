@@ -57,6 +57,9 @@ class CourierRepositoryTest {
     @Test
     void cleanup_job_deletes_rows_older_than_retention_window() {
         LocationCleanupJob job = new LocationCleanupJob(locationRepository);
+        // retentionDays is @Value-injected and defaults to 0 in unit tests;
+        // set it to 90 to match the production default.
+        org.springframework.test.util.ReflectionTestUtils.setField(job, "retentionDays", 90);
         when(locationRepository.deleteByRecordedAtBefore(any())).thenReturn(42);
 
         job.purgeOldLocations();
@@ -64,8 +67,8 @@ class CourierRepositoryTest {
         ArgumentCaptor<Instant> cutoffCaptor = ArgumentCaptor.forClass(Instant.class);
         verify(locationRepository).deleteByRecordedAtBefore(cutoffCaptor.capture());
 
-        // Cutoff must be in the past (at least 1 day ago by default retention)
-        assertThat(cutoffCaptor.getValue()).isBefore(Instant.now().minusSeconds(3600));
+        // Cutoff must be at least 89 days in the past (90-day retention window)
+        assertThat(cutoffCaptor.getValue()).isBefore(Instant.now().minus(89, java.time.temporal.ChronoUnit.DAYS));
     }
 
     // ── Soft-delete contract ───────────────────────────────────────────────────
