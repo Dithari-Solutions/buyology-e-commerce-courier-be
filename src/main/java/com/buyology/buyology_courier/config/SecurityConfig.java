@@ -46,6 +46,11 @@ public class SecurityConfig {
     private final ObjectMapper objectMapper;
 
     @Bean
+    ObjectMapper objectMapper() {
+        return new ObjectMapper();
+    }
+
+    @Bean
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver
