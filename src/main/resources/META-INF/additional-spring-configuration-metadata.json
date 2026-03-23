@@ -46,6 +46,12 @@
       "description": "Expected `aud` claim value in Keycloak admin JWTs. Tokens missing this audience are rejected. Must match the Audience mapper configured in Keycloak for the buyology-courier-service client."
     },
     {
+      "name": "auth.refresh-token.cleanup-cron",
+      "type": "java.lang.String",
+      "defaultValue": "0 0 3 * * *",
+      "description": "Cron expression for the nightly job that purges expired refresh tokens. Defaults to 03:00 server time."
+    },
+    {
       "name": "management.tracing.sampling.probability",
       "type": "java.lang.Double",
       "description": "Fraction of requests to sample for distributed tracing (0.0–1.0). Use 1.0 in dev, 0.1 in prod."

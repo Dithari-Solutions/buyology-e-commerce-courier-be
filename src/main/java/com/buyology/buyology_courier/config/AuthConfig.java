@@ -32,19 +32,19 @@ public class AuthConfig {
      * so the Keycloak decoder below must be created explicitly too.
      */
     @Bean("courierJwtDecoder")
-    NimbusJwtDecoder courierJwtDecoder(@Value("${auth.jwt.secret}") String secret) {
+    NimbusJwtDecoder courierJwtDecoder(
+            @Value("${auth.jwt.secret}") String secret,
+            @Value("${auth.jwt.issuer:buyology-courier-service}") String issuer
+    ) {
         SecretKeySpec key = new SecretKeySpec(
                 secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key)
                 .macAlgorithm(MacAlgorithm.HS256)
                 .build();
 
-        // Validate issuer on courier tokens so a Keycloak token is never accepted here
-        OAuth2TokenValidator<Jwt> validator = new DelegatingOAuth2TokenValidator<>(
-                JwtValidators.createDefaultWithIssuer("${auth.jwt.issuer:buyology-courier-service}"),
-                new JwtTimestampValidator()
-        );
-        decoder.setJwtValidator(validator);
+        // Validate issuer on courier tokens so a Keycloak token is never accepted here.
+        // createDefaultWithIssuer already includes JwtTimestampValidator (exp/nbf/iat).
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
         return decoder;
     }
 
