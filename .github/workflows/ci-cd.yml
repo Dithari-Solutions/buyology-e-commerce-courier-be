@@ -9,9 +9,11 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  DEPLOY_PATH: /opt/buyology-e-commerce-courier-be
 
 jobs:
-  # ── Build & Test ──────────────────────────────────────────────────────────
+
+  # ── Job 1: Build & Test ─────────────────────────────────────────────────────
   build:
     name: Build & Test
     runs-on: ubuntu-latest
@@ -21,12 +23,12 @@ jobs:
         image: postgis/postgis:16-3.4
         env:
           POSTGRES_DB: buyology_courier_test
-          POSTGRES_USER: postgres
+          POSTGRES_USER: buyology
           POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U postgres"
+          --health-cmd "pg_isready -U buyology"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -69,7 +71,7 @@ jobs:
         run: ./mvnw verify -Dspring.profiles.active=dev
         env:
           DB_URL: jdbc:postgresql://localhost:5432/buyology_courier_test
-          DB_USERNAME: postgres
+          DB_USERNAME: buyology
           DB_PASSWORD: postgres
           RABBITMQ_HOST: localhost
           RABBITMQ_USERNAME: guest
@@ -85,7 +87,7 @@ jobs:
           name: surefire-reports
           path: target/surefire-reports/
 
-  # ── Docker Build & Push ───────────────────────────────────────────────────
+  # ── Job 2: Build & Push Docker Image ───────────────────────────────────────
   publish:
     name: Publish Docker Image
     needs: build
@@ -98,7 +100,6 @@ jobs:
 
     outputs:
       image_tag: ${{ steps.meta.outputs.tags }}
-      image_digest: ${{ steps.push.outputs.digest }}
 
     steps:
       - name: Checkout
@@ -134,7 +135,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Deploy ────────────────────────────────────────────────────────────────
+  # ── Job 3: Deploy to Production ─────────────────────────────────────────────
   deploy:
     name: Deploy to Production
     needs: publish
@@ -145,42 +146,121 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Copy docker-compose.yml so the server always runs the latest version
+      - name: Copy docker-compose.yml to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: docker-compose.yml
+          target: ${{ env.DEPLOY_PATH }}
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # Increased timeout for image pull + Flyway migrations
+          command_timeout: 5m
           script: |
-            cd /opt/buyology-courier
+            set -euo pipefail
+            cd ${{ env.DEPLOY_PATH }}
 
-            # Pull latest compose file
-            git pull origin main
+            # ── Write .env atomically ──────────────────────────────────────────
+            # GitHub Actions expands ${{ secrets.* }} before sending the script,
+            # so the heredoc delimiter is quoted only to prevent server-side shell
+            # expansion of any remaining $ characters.
+            cat > .env.tmp << 'ENVEOF'
+            SPRING_PROFILES_ACTIVE=prod
+            IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            DB_URL=${{ secrets.DB_URL }}
+            DB_USERNAME=${{ secrets.DB_USERNAME }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_POOL_SIZE=30
+            DB_POOL_MIN_IDLE=10
+            RABBITMQ_HOST=rabbitmq
+            RABBITMQ_USERNAME=${{ secrets.RABBITMQ_USERNAME }}
+            RABBITMQ_PASSWORD=${{ secrets.RABBITMQ_PASSWORD }}
+            REDIS_HOST=redis
+            REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
+            JWT_ISSUER_URI=${{ secrets.JWT_ISSUER_URI }}
+            AUTH_JWT_SECRET=${{ secrets.AUTH_JWT_SECRET }}
+            AUTH_ADMIN_JWT_AUDIENCE=${{ secrets.AUTH_ADMIN_JWT_AUDIENCE }}
+            CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
+            ENVEOF
+            mv .env.tmp .env
+            chmod 600 .env
 
-            # Login to GHCR on the server
+            # ── Login to GHCR ──────────────────────────────────────────────────
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io \
-              -u ${{ github.actor }} --password-stdin
+              -u "${{ github.actor }}" --password-stdin
 
-            # Set env vars and pull + restart
-            export IMAGE_TAG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
-            export SPRING_PROFILES_ACTIVE=prod
-            export DB_URL=${{ secrets.DB_URL }}
-            export DB_USERNAME=${{ secrets.DB_USERNAME }}
-            export DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            export DB_POOL_SIZE=30
-            export DB_POOL_MIN_IDLE=10
-            export RABBITMQ_HOST=${{ secrets.RABBITMQ_HOST }}
-            export RABBITMQ_USERNAME=${{ secrets.RABBITMQ_USERNAME }}
-            export RABBITMQ_PASSWORD=${{ secrets.RABBITMQ_PASSWORD }}
-            export REDIS_HOST=${{ secrets.REDIS_HOST }}
-            export REDIS_PASSWORD=${{ secrets.REDIS_PASSWORD }}
-            export JWT_ISSUER_URI=${{ secrets.JWT_ISSUER_URI }}
-            export AUTH_JWT_SECRET=${{ secrets.AUTH_JWT_SECRET }}
-            export CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
+            # ── Ensure infrastructure is up ────────────────────────────────────
+            # --no-recreate keeps postgres/rabbitmq/redis stable across app deploys
+            # so that the database volume is never accidentally dropped.
+            docker compose up -d --no-recreate postgres rabbitmq redis
 
+            # ── Wait for Postgres to accept connections ────────────────────────
+            # Flyway will fail fast if it can't connect, so we block here first.
+            echo "Waiting for Postgres..."
+            for i in $(seq 1 24); do
+              if docker exec buyology-postgres \
+                   pg_isready -U "${{ secrets.DB_USERNAME }}" -d buyology_courier \
+                   >/dev/null 2>&1; then
+                echo "  Postgres is ready."
+                break
+              fi
+              if [ "$i" = "24" ]; then
+                echo "ERROR: Postgres did not become ready in 120s."
+                docker compose logs --tail=30 postgres
+                exit 1
+              fi
+              echo "  attempt $i/24..."
+              sleep 5
+            done
+
+            # ── Pull latest image & restart courier ────────────────────────────
             docker compose pull courier
-            docker compose up -d --no-deps courier
+            docker compose up -d --no-deps --remove-orphans courier
 
-            # Wait for health check
-            sleep 15
-            docker compose ps courier
+            # ── Readiness probe loop (max 90s) ─────────────────────────────────
+            # /actuator/health/readiness returns 200 only after Flyway migrations
+            # complete and all dependencies (DB, RabbitMQ, Redis) are up.
+            echo "Waiting for courier readiness probe..."
+            for i in $(seq 1 18); do
+              HTTP=$(curl -sf -o /dev/null -w "%{http_code}" \
+                http://localhost:8081/actuator/health/readiness 2>/dev/null || echo "000")
+              if [ "$HTTP" = "200" ]; then
+                echo "  Deploy successful — readiness probe returned 200."
+                break
+              fi
+              if [ "$i" = "18" ]; then
+                echo "ERROR: Courier did not become ready in 90s (last HTTP: $HTTP)."
+                echo "--- Last 80 log lines ---"
+                docker compose logs --tail=80 courier
+                # Roll back to previous image
+                docker compose stop courier
+                docker compose rm -f courier
+                docker image tag \
+                  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:previous" \
+                  "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
+                  2>/dev/null || true
+                exit 1
+              fi
+              echo "  attempt $i/18: HTTP $HTTP"
+              sleep 5
+            done
+
+            # ── Tag the just-deployed image as "previous" for rollback ─────────
+            docker tag \
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" \
+              "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:previous" \
+              2>/dev/null || true
+
+            # ── Clean up dangling images (keep last 24h) ──────────────────────
+            docker image prune -f --filter "until=24h" || true
+
+            echo "=== Running containers ==="
+            docker compose ps

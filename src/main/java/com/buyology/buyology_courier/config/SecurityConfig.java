@@ -58,6 +58,8 @@ public class SecurityConfig {
                 .sessionManagement(session ->
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
+                        // Root landing page and static assets
+                        .requestMatchers("/", "/index.html", "/*.css", "/*.js", "/*.ico", "/*.png").permitAll()
                         // Kubernetes liveness / readiness probes — must be public
                         .requestMatchers("/actuator/health/**", "/actuator/info").permitAll()
                         // All other actuator endpoints require ADMIN
