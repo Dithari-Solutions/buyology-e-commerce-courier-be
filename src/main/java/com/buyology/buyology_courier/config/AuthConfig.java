@@ -8,7 +8,12 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.core.OAuth2TokenValidator;
 import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
-import org.springframework.security.oauth2.jwt.*;
+import org.springframework.security.oauth2.jwt.Jwt;
+import org.springframework.security.oauth2.jwt.JwtClaimNames;
+import org.springframework.security.oauth2.jwt.JwtClaimValidator;
+import org.springframework.security.oauth2.jwt.JwtDecoder;
+import org.springframework.security.oauth2.jwt.JwtValidators;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
@@ -70,7 +75,11 @@ public class AuthConfig {
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,
             @Value("${auth.admin.jwt.audience:buyology-courier-service}") String expectedAudience
     ) {
-        NimbusJwtDecoder decoder = (NimbusJwtDecoder) JwtDecoders.fromIssuerLocation(issuerUri);
+        // withJwkSetUri defers the HTTP call to Keycloak until a token is actually validated,
+        // so the app starts up even if Keycloak is not yet reachable.
+        NimbusJwtDecoder decoder = NimbusJwtDecoder
+                .withJwkSetUri(issuerUri + "/protocol/openid-connect/certs")
+                .build();
 
         OAuth2TokenValidator<Jwt> issuerValidator    = JwtValidators.createDefaultWithIssuer(issuerUri);
         OAuth2TokenValidator<Jwt> audienceValidator  = new JwtClaimValidator<List<String>>(
