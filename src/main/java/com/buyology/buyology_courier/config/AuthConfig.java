@@ -70,6 +70,25 @@ public class AuthConfig {
      *   Client → buyology-courier-service → Settings → "Audience" mapper → add
      *   "buyology-courier-service" to the access token audience.
      */
+    /**
+     * JWT decoder for ecommerce-backend service-to-service tokens (HMAC-SHA256).
+     * The ecommerce backend generates a short-lived token per request signed with
+     * the shared secret configured via ECOMMERCE_SERVICE_JWT_SECRET.
+     */
+    @Bean("ecommerceServiceJwtDecoder")
+    NimbusJwtDecoder ecommerceServiceJwtDecoder(
+            @Value("${ecommerce.service.jwt.secret}") String secret,
+            @Value("${ecommerce.service.jwt.issuer:buyology-ecommerce-service}") String issuer
+    ) {
+        SecretKeySpec key = new SecretKeySpec(
+                secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key)
+                .macAlgorithm(MacAlgorithm.HS256)
+                .build();
+        decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
+        return decoder;
+    }
+
     @Bean("keycloakJwtDecoder")
     JwtDecoder keycloakJwtDecoder(
             @Value("${spring.security.oauth2.resourceserver.jwt.issuer-uri}") String issuerUri,

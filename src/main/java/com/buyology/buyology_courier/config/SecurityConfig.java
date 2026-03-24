@@ -103,10 +103,14 @@ public class SecurityConfig {
      * claim is only used to choose a decoder — the chosen decoder then performs full
      * cryptographic validation.
      */
+    @Value("${ecommerce.service.jwt.issuer:buyology-ecommerce-service}")
+    private String ecommerceServiceIssuer;
+
     @Bean
     AuthenticationManagerResolver<HttpServletRequest> jwtAuthManagerResolver(
             @Qualifier("courierJwtDecoder") NimbusJwtDecoder courierDecoder,
-            @Qualifier("keycloakJwtDecoder") JwtDecoder keycloakDecoder
+            @Qualifier("keycloakJwtDecoder") JwtDecoder keycloakDecoder,
+            @Qualifier("ecommerceServiceJwtDecoder") NimbusJwtDecoder ecommerceServiceDecoder
     ) {
         JwtAuthenticationProvider courierProvider = new JwtAuthenticationProvider(courierDecoder);
         courierProvider.setJwtAuthenticationConverter(jwtAuthenticationConverter());
@@ -114,10 +118,16 @@ public class SecurityConfig {
         JwtAuthenticationProvider keycloakProvider = new JwtAuthenticationProvider(keycloakDecoder);
         keycloakProvider.setJwtAuthenticationConverter(jwtAuthenticationConverter());
 
+        JwtAuthenticationProvider ecommerceServiceProvider = new JwtAuthenticationProvider(ecommerceServiceDecoder);
+        ecommerceServiceProvider.setJwtAuthenticationConverter(jwtAuthenticationConverter());
+
         return request -> {
             String token = extractBearerToken(request);
             if (token != null && isCourierToken(token)) {
                 return courierProvider::authenticate;
+            }
+            if (token != null && isEcommerceServiceToken(token)) {
+                return ecommerceServiceProvider::authenticate;
             }
             return keycloakProvider::authenticate;
         };
@@ -177,6 +187,15 @@ public class SecurityConfig {
         try {
             String iss = (String) JWTParser.parse(token).getJWTClaimsSet().getClaim("iss");
             return courierIssuer.equals(iss);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private boolean isEcommerceServiceToken(String token) {
+        try {
+            String iss = (String) JWTParser.parse(token).getJWTClaimsSet().getClaim("iss");
+            return ecommerceServiceIssuer.equals(iss);
         } catch (Exception e) {
             return false;
         }
