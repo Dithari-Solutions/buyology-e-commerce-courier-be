@@ -2,6 +2,7 @@ package com.buyology.buyology_courier.config;
 
 import com.buyology.buyology_courier.common.exception.ErrorResponse;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.nimbusds.jwt.JWTParser;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,7 +44,7 @@ public class SecurityConfig {
 
     @Bean
     ObjectMapper objectMapper() {
-        return new ObjectMapper();
+        return new ObjectMapper().registerModule(new JavaTimeModule());
     }
 
     @Bean
