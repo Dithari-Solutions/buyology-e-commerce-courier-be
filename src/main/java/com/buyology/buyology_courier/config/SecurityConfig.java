@@ -26,9 +26,11 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import jakarta.servlet.http.HttpServletRequest;
+import lombok.extern.slf4j.Slf4j;
 import java.util.Arrays;
 import java.util.List;
 
+@Slf4j
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
@@ -79,6 +81,9 @@ public class SecurityConfig {
                         // Routes JWT validation to the correct decoder based on the token issuer
                         .authenticationManagerResolver(jwtAuthManagerResolver)
                         .authenticationEntryPoint((request, response, ex) -> {
+                            log.warn("[JWT-AUTH] 401 on {} {} — {}: {}",
+                                    request.getMethod(), request.getRequestURI(),
+                                    ex.getClass().getSimpleName(), ex.getMessage());
                             response.setStatus(401);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                             response.getWriter().write(objectMapper.writeValueAsString(
@@ -124,12 +129,22 @@ public class SecurityConfig {
 
         return request -> {
             String token = extractBearerToken(request);
-            if (token != null && isCourierToken(token)) {
+            if (token == null) {
+                log.warn("[JWT-ROUTER] No Bearer token on {} {}", request.getMethod(), request.getRequestURI());
+                return keycloakProvider::authenticate;
+            }
+            String iss = extractIss(token);
+            log.debug("[JWT-ROUTER] iss={} uri={}", iss, request.getRequestURI());
+            if (isCourierToken(token)) {
+                log.debug("[JWT-ROUTER] → courierDecoder");
                 return courierProvider::authenticate;
             }
-            if (token != null && isEcommerceServiceToken(token)) {
+            if (isEcommerceServiceToken(token)) {
+                log.debug("[JWT-ROUTER] → ecommerceServiceDecoder");
                 return ecommerceServiceProvider::authenticate;
             }
+            log.warn("[JWT-ROUTER] iss='{}' did not match courier('{}') or ecommerce('{}') — falling back to Keycloak decoder",
+                    iss, courierIssuer, ecommerceServiceIssuer);
             return keycloakProvider::authenticate;
         };
     }
@@ -184,6 +199,14 @@ public class SecurityConfig {
      * Read the {@code iss} claim WITHOUT signature verification to decide which
      * decoder to use. The actual verification happens inside the chosen provider.
      */
+    private String extractIss(String token) {
+        try {
+            return (String) JWTParser.parse(token).getJWTClaimsSet().getClaim("iss");
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
     private boolean isCourierToken(String token) {
         try {
             String iss = (String) JWTParser.parse(token).getJWTClaimsSet().getClaim("iss");
