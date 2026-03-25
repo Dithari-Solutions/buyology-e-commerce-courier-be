@@ -81,9 +81,13 @@ public class SecurityConfig {
                         // Routes JWT validation to the correct decoder based on the token issuer
                         .authenticationManagerResolver(jwtAuthManagerResolver)
                         .authenticationEntryPoint((request, response, ex) -> {
-                            log.warn("[JWT-AUTH] 401 on {} {} — {}: {}",
+                            String rawToken = extractBearerToken(request);
+                            String tokenSnippet = rawToken != null && rawToken.length() > 10
+                                    ? rawToken.substring(0, 6) + "…" + rawToken.substring(rawToken.length() - 4)
+                                    : "(none)";
+                            log.warn("[JWT-AUTH] 401 on {} {} — {}: {} | token={}",
                                     request.getMethod(), request.getRequestURI(),
-                                    ex.getClass().getSimpleName(), ex.getMessage());
+                                    ex.getClass().getSimpleName(), ex.getMessage(), tokenSnippet);
                             response.setStatus(401);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                             response.getWriter().write(objectMapper.writeValueAsString(
@@ -140,7 +144,8 @@ public class SecurityConfig {
                 return courierProvider::authenticate;
             }
             if (isEcommerceServiceToken(token)) {
-                log.info("[JWT-ROUTER] → ecommerceServiceDecoder");
+                log.info("[JWT-ROUTER] → ecommerceServiceDecoder alg='{}' tokenLen={}",
+                        extractAlg(token), token.length());
                 return ecommerceServiceProvider::authenticate;
             }
             log.warn("[JWT-ROUTER] iss='{}' did not match courier('{}') or ecommerce('{}') — falling back to Keycloak decoder",
@@ -222,6 +227,14 @@ public class SecurityConfig {
             return ecommerceServiceIssuer.equals(iss);
         } catch (Exception e) {
             return false;
+        }
+    }
+
+    private String extractAlg(String token) {
+        try {
+            return JWTParser.parse(token).getHeader().getAlgorithm().getName();
+        } catch (Exception e) {
+            return "unknown";
         }
     }
 }

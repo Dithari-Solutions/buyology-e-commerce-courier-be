@@ -18,6 +18,8 @@ import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import lombok.extern.slf4j.Slf4j;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 
 @Slf4j
@@ -82,10 +84,16 @@ public class AuthConfig {
             @Value("${ecommerce.service.jwt.secret}") String secret,
             @Value("${ecommerce.service.jwt.issuer:buyology-ecommerce-service}") String issuer
     ) {
-        log.warn("[ECOMMERCE-DECODER] secret length={} first4='{}' issuer='{}'",
-                secret.length(),
-                secret.length() >= 4 ? secret.substring(0, 4) : secret,
-                issuer);
+        try {
+            byte[] sha256 = MessageDigest.getInstance("SHA-256")
+                    .digest(secret.getBytes(StandardCharsets.UTF_8));
+            String fingerprint = HexFormat.of().formatHex(sha256).substring(0, 16);
+            log.warn("[ECOMMERCE-DECODER] secret length={} sha256prefix='{}' issuer='{}'",
+                    secret.length(), fingerprint, issuer);
+        } catch (Exception e) {
+            log.warn("[ECOMMERCE-DECODER] secret length={} issuer='{}' (fingerprint failed: {})",
+                    secret.length(), issuer, e.getMessage());
+        }
         SecretKeySpec key = new SecretKeySpec(
                 secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key)
