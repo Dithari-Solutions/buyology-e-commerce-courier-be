@@ -17,6 +17,11 @@ WORKDIR /app
 
 # Non-root user — reduces blast radius if the container is compromised
 RUN addgroup -S courier && adduser -S courier -G courier
+
+# Create the uploads directory and give ownership to the app user before
+# switching to it — otherwise Files.createDirectories() throws AccessDeniedException.
+RUN mkdir -p /app/uploads && chown -R courier:courier /app/uploads
+
 USER courier
 
 COPY --from=build /app/target/*.jar app.jar
