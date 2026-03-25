@@ -144,8 +144,7 @@ public class SecurityConfig {
                 return courierProvider::authenticate;
             }
             if (isEcommerceServiceToken(token)) {
-                log.info("[JWT-ROUTER] → ecommerceServiceDecoder alg='{}' tokenLen={}",
-                        extractAlg(token), token.length());
+                logEcommerceTokenDetails(token);
                 return ecommerceServiceProvider::authenticate;
             }
             log.warn("[JWT-ROUTER] iss='{}' did not match courier('{}') or ecommerce('{}') — falling back to Keycloak decoder",
@@ -195,7 +194,12 @@ public class SecurityConfig {
     private String extractBearerToken(HttpServletRequest request) {
         String header = request.getHeader("Authorization");
         if (header != null && header.startsWith("Bearer ")) {
-            return header.substring(7).trim();
+            String token = header.substring(7).trim();
+            if (token.length() != header.substring(7).length()) {
+                log.warn("[JWT-ROUTER] Authorization header had leading/trailing whitespace in token part (rawLen={} trimmedLen={})",
+                        header.substring(7).length(), token.length());
+            }
+            return token;
         }
         return null;
     }
@@ -235,6 +239,23 @@ public class SecurityConfig {
             return JWTParser.parse(token).getHeader().getAlgorithm().getName();
         } catch (Exception e) {
             return "unknown";
+        }
+    }
+
+    private void logEcommerceTokenDetails(String token) {
+        try {
+            var jwt = JWTParser.parse(token);
+            var claims = jwt.getJWTClaimsSet();
+            log.info("[JWT-ROUTER] → ecommerceServiceDecoder alg='{}' tokenLen={} sub='{}' iss='{}' roles={} iat={} exp={}",
+                    jwt.getHeader().getAlgorithm().getName(),
+                    token.length(),
+                    claims.getSubject(),
+                    claims.getIssuer(),
+                    claims.getClaim("roles"),
+                    claims.getIssueTime(),
+                    claims.getExpirationTime());
+        } catch (Exception e) {
+            log.warn("[JWT-ROUTER] → ecommerceServiceDecoder (failed to decode token details: {})", e.getMessage());
         }
     }
 }
