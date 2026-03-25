@@ -79,7 +79,7 @@ class CourierServiceImplTest {
             when(courierRepository.save(any())).thenReturn(saved);
             when(outboxEventRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-            CourierResponse result = service.create(request);
+            CourierResponse result = service.create(request, null, null);
 
             assertThat(result.id()).isEqualTo(saved.getId());
 
@@ -99,7 +99,7 @@ class CourierServiceImplTest {
 
             when(courierRepository.existsByPhoneAndDeletedAtIsNull(request.phone())).thenReturn(true);
 
-            assertThatThrownBy(() -> service.create(request))
+            assertThatThrownBy(() -> service.create(request, null, null))
                     .isInstanceOf(DuplicatePhoneException.class);
             verify(courierRepository, never()).save(any());
         }

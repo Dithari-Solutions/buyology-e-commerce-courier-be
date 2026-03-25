@@ -1,6 +1,8 @@
 package com.buyology.buyology_courier.courier.controller;
 
+import com.buyology.buyology_courier.auth.service.AdminAuditService;
 import com.buyology.buyology_courier.common.exception.GlobalExceptionHandler;
+import com.buyology.buyology_courier.common.storage.FileStorageService;
 import com.buyology.buyology_courier.courier.domain.enums.CourierStatus;
 import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.CreateCourierRequest;
@@ -8,7 +10,6 @@ import com.buyology.buyology_courier.courier.dto.request.UpdateCourierStatusRequ
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
 import com.buyology.buyology_courier.courier.exception.CourierNotFoundException;
 import com.buyology.buyology_courier.courier.exception.RateLimitExceededException;
-import com.buyology.buyology_courier.auth.service.AdminAuditService;
 import com.buyology.buyology_courier.courier.security.CourierSecurityService;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockPart;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -27,6 +29,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -45,8 +48,9 @@ class CourierControllerTest {
     @Mock CourierService         courierService;
     @Mock CourierSecurityService courierSecurity;
     @Mock AdminAuditService      adminAuditService;
+    @Mock FileStorageService     fileStorageService;
 
-    private MockMvc    mockMvc;
+    private MockMvc      mockMvc;
     private ObjectMapper objectMapper;
     private static final UUID COURIER_ID = UUID.randomUUID();
 
@@ -55,7 +59,7 @@ class CourierControllerTest {
         objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
 
         mockMvc = MockMvcBuilders
-                .standaloneSetup(new CourierController(courierService, adminAuditService))
+                .standaloneSetup(new CourierController(courierService, adminAuditService, fileStorageService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .build();
     }
@@ -68,40 +72,29 @@ class CourierControllerTest {
                 .firstName("Ada").lastName("Lovelace")
                 .phone("+1234567890").vehicleType(VehicleType.BICYCLE).build();
 
-        when(courierService.create(any())).thenReturn(courierResponse());
+        when(courierService.create(any(), isNull(), isNull())).thenReturn(courierResponse());
 
-        mockMvc.perform(post("/api/v1/couriers")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+        // POST is now multipart: JSON fields go in the "data" part
+        MockPart dataPart = new MockPart("data", objectMapper.writeValueAsBytes(request));
+        dataPart.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+
+        mockMvc.perform(multipart("/api/v1/couriers").part(dataPart))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").value(COURIER_ID.toString()));
     }
 
     @Test
     void create_returns_400_when_vehicleType_missing() throws Exception {
-        String body = """
+        // JSON missing vehicleType — Spring should reject with 400
+        String json = """
                 {"firstName":"Ada","lastName":"Lovelace","phone":"+123"}
                 """;
+        MockPart dataPart = new MockPart("data", json.getBytes());
+        dataPart.getHeaders().setContentType(MediaType.APPLICATION_JSON);
 
-        mockMvc.perform(post("/api/v1/couriers")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+        mockMvc.perform(multipart("/api/v1/couriers").part(dataPart))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.vehicleType").exists());
-    }
-
-    @Test
-    void create_returns_400_when_profileImageUrl_invalid() throws Exception {
-        String body = """
-                {"firstName":"Ada","lastName":"Lovelace","phone":"+123",
-                 "vehicleType":"BICYCLE","profileImageUrl":"not-a-url"}
-                """;
-
-        mockMvc.perform(post("/api/v1/couriers")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.fieldErrors.profileImageUrl").exists());
     }
 
     // ── GET /api/v1/couriers/{id} ──────────────────────────────────────────────
@@ -169,7 +162,7 @@ class CourierControllerTest {
         return new CourierResponse(
                 COURIER_ID, "Ada", "Lovelace", "+1234567890", "ada@test.com",
                 VehicleType.BICYCLE, CourierStatus.ACTIVE, true,
-                new BigDecimal("4.8"), null, Instant.now(), Instant.now()
+                new BigDecimal("4.8"), null, null, Instant.now(), Instant.now()
         );
     }
 }

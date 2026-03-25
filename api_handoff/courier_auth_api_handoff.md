@@ -17,13 +17,14 @@ The flow is:
 Admin Panel (browser)
       │
       │  1. Admin logs in to Keycloak (same as today)
-      │  2. Admin fills in courier form
-      │  3. POST /api/auth/admin/couriers  ←── this document
+      │  2. Admin fills courier form + selects image files
+      │  3. POST /api/auth/admin/couriers   ←── multipart/form-data
       │
       ▼
 buyology-courier-service
       │
-      ├─ Creates courier profile
+      ├─ Stores uploaded images to ./uploads/couriers/
+      ├─ Creates courier profile (with image URLs)
       ├─ Creates login credentials (phone + hashed password)
       ├─ Creates vehicle details (driving licence if motorized)
       └─ Returns courier summary
@@ -72,60 +73,64 @@ After this, every Keycloak access token issued to an admin for this client will 
 ```
 POST /api/auth/admin/couriers
 Authorization: Bearer <keycloak-access-token>
-Content-Type: application/json
+Content-Type: multipart/form-data
 ```
 
 ### Required role
 
 `COURIER_ADMIN` or `ADMIN` in the Keycloak token's `roles` claim.
 
-### Request body
+### Request format — multipart/form-data
+
+The request is a multipart form with one JSON part and up to four image file parts.
+
+| Part name            | Type         | Required | Description |
+|----------------------|--------------|----------|-------------|
+| `data`               | JSON string  | ✅       | Courier details — see JSON fields table below |
+| `profileImage`       | image file   | ❌       | Courier profile photo. JPEG, PNG, or WebP. Max 10 MB. |
+| `vehicleRegistration`| image file   | ❌       | Vehicle registration document photo. JPEG, PNG, or WebP. Max 10 MB. |
+| `drivingLicenceFront`| image file   | ✅ if motorized | Front of driving licence. Required for `SCOOTER`/`CAR`. |
+| `drivingLicenceBack` | image file   | ✅ if motorized | Back of driving licence. Required for `SCOOTER`/`CAR`. |
+
+### `data` part — JSON fields
 
 ```json
 {
-  "firstName":       "John",
-  "lastName":        "Smith",
-  "phone":           "+994501234567",
-  "email":           "john.smith@example.com",
-  "profileImageUrl": "https://storage.buyology.com/couriers/john.jpg",
-  "initialPassword": "Secure#Pass1",
+  "firstName":            "John",
+  "lastName":             "Smith",
+  "phone":                "+994501234567",
+  "email":                "john.smith@example.com",
+  "initialPassword":      "Secure#Pass1",
 
-  "vehicleType":     "SCOOTER",
-  "vehicleMake":     "Honda",
-  "vehicleModel":    "PCX125",
-  "vehicleYear":     2022,
-  "vehicleColor":    "White",
-  "licensePlate":    "10 BB 456",
-  "vehicleRegistrationUrl": "https://storage.buyology.com/docs/reg-456.pdf",
+  "vehicleType":          "SCOOTER",
+  "vehicleMake":          "Honda",
+  "vehicleModel":         "PCX125",
+  "vehicleYear":          2022,
+  "vehicleColor":         "White",
+  "licensePlate":         "10 BB 456",
 
-  "drivingLicenseNumber":   "DL-7654321",
-  "drivingLicenseExpiry":   "2029-03-15",
-  "drivingLicenseFrontUrl": "https://storage.buyology.com/docs/dl-front.jpg",
-  "drivingLicenseBackUrl":  "https://storage.buyology.com/docs/dl-back.jpg"
+  "drivingLicenseNumber": "DL-7654321",
+  "drivingLicenseExpiry": "2029-03-15"
 }
 ```
 
-### Field reference
+### JSON field reference
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `firstName` | string | ✅ | Max 100 chars |
 | `lastName` | string | ✅ | Max 100 chars |
-| `phone` | string | ✅ | Max 30 chars. Must be unique across all couriers. Used as login identifier. |
-| `email` | string | ❌ | Must be a valid email if provided. Max 150 chars. |
-| `profileImageUrl` | string | ❌ | Must be a valid HTTP/HTTPS URL. Max 2048 chars. |
-| `initialPassword` | string | ✅ | 8–100 chars. Shared with the courier out-of-band. They use it to log in. |
-| `vehicleType` | enum | ✅ | See vehicle type table below. |
-| `vehicleMake` | string | ❌ | Max 100 chars. e.g. `Honda`. Not required for `BICYCLE`/`FOOT`. |
-| `vehicleModel` | string | ❌ | Max 100 chars. e.g. `PCX125`. |
-| `vehicleYear` | integer | ❌ | 1900–2100. |
-| `vehicleColor` | string | ❌ | Max 50 chars. |
-| `licensePlate` | string | ✅ if motorized | Max 50 chars. **Required** for `SCOOTER` and `CAR`. Must be globally unique. |
-| `vehicleRegistrationUrl` | string | ❌ | Valid URL to scanned registration document. |
-| `drivingLicenseNumber` | string | ✅ if motorized | Max 100 chars. **Required** for `SCOOTER` and `CAR`. |
-| `drivingLicenseExpiry` | date | ✅ if motorized | Format `YYYY-MM-DD`. **Required** for `SCOOTER` and `CAR`. |
-| `drivingLicenseFrontUrl` | string | ❌ | Valid URL to front scan of licence. Strongly recommended for motorized vehicles. |
-| `drivingLicenseBackUrl` | string | ❌ | Valid URL to back scan of licence. Strongly recommended for motorized vehicles. |
+| `phone` | string | ✅ | Max 30 chars. Must be unique. Used as the courier's login identifier. |
+| `email` | string | ❌ | Valid email format if provided. Max 150 chars. |
+| `initialPassword` | string | ✅ | 8–100 chars. Share with the courier out-of-band. Never returned in any response. |
+| `vehicleType` | enum | ✅ | `BICYCLE`, `FOOT`, `SCOOTER`, or `CAR` |
+| `vehicleMake` | string | ❌ | Max 100 chars. e.g. `Honda` |
+| `vehicleModel` | string | ❌ | Max 100 chars. e.g. `PCX125` |
+| `vehicleYear` | integer | ❌ | 1900–2100 |
+| `vehicleColor` | string | ❌ | Max 50 chars |
+| `licensePlate` | string | ✅ if motorized | Max 50 chars. **Required** for `SCOOTER`/`CAR`. Must be globally unique. |
+| `drivingLicenseNumber` | string | ✅ if motorized | Max 100 chars. **Required** for `SCOOTER`/`CAR`. |
+| `drivingLicenseExpiry` | date | ✅ if motorized | `YYYY-MM-DD`. **Required** for `SCOOTER`/`CAR`. |
 
 ### Vehicle types and driving licence rule
 
@@ -136,15 +141,27 @@ Content-Type: application/json
 | `SCOOTER` | ✅ Yes | ✅ Yes |
 | `CAR` | ✅ Yes | ✅ Yes |
 
-**Frontend validation rule:**
+**Frontend rule:**
 ```
 if (vehicleType === 'SCOOTER' || vehicleType === 'CAR') {
-  // show and require: licensePlate, drivingLicenseNumber, drivingLicenseExpiry
-  // show optional:    vehicleRegistrationUrl, drivingLicenseFrontUrl, drivingLicenseBackUrl
+  // show and require text fields: licensePlate, drivingLicenseNumber, drivingLicenseExpiry
+  // show and require file inputs: drivingLicenceFront, drivingLicenceBack
+  // show optional file input:     vehicleRegistration
 } else {
-  // hide all driving licence and license plate fields
+  // hide all driving licence fields and file inputs
+  // hide licensePlate field
 }
 ```
+
+### Image file constraints
+
+| Constraint | Value |
+|---|---|
+| Accepted types | `image/jpeg`, `image/png`, `image/webp` |
+| Max size per file | 10 MB |
+| Max total request size | 50 MB |
+
+Files are stored server-side. The stored URLs are returned in subsequent `GET /api/v1/couriers/{id}` responses.
 
 ### Success response — `201 Created`
 
@@ -164,6 +181,49 @@ if (vehicleType === 'SCOOTER' || vehicleType === 'CAR') {
 
 ---
 
+## Endpoint: Get Courier Details
+
+```
+GET /api/v1/couriers/{id}
+Authorization: Bearer <keycloak-access-token>
+```
+
+### Response — `200 OK`
+
+All image URLs are relative paths on the courier service. Prepend `COURIER_SERVICE_URL` to build the full URL for display.
+
+```json
+{
+  "id":                     "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "firstName":              "John",
+  "lastName":               "Smith",
+  "phone":                  "+994501234567",
+  "email":                  "john.smith@example.com",
+  "vehicleType":            "SCOOTER",
+  "status":                 "OFFLINE",
+  "isAvailable":            false,
+  "rating":                 null,
+  "profileImageUrl":        "/uploads/couriers/profile/a1b2c3d4.jpg",
+  "drivingLicenceImageUrl": "/uploads/couriers/licence/e5f6g7h8.jpg",
+  "createdAt":              "2026-03-25T10:00:00Z",
+  "updatedAt":              "2026-03-25T10:00:00Z"
+}
+```
+
+| Field | Notes |
+|---|---|
+| `profileImageUrl` | Relative URL. `null` if no photo was uploaded. |
+| `drivingLicenceImageUrl` | Front face of driving licence. `null` for `BICYCLE`/`FOOT` couriers or if not uploaded. |
+
+Build the full image URL in your frontend:
+```javascript
+const fullUrl = profileImageUrl
+  ? `${process.env.COURIER_SERVICE_URL}${courier.profileImageUrl}`
+  : null;
+```
+
+---
+
 ## Error Responses
 
 All errors follow the same shape:
@@ -174,7 +234,7 @@ All errors follow the same shape:
   "error":     "Conflict",
   "message":   "Phone number is already registered: +994501234567",
   "path":      "/api/auth/admin/couriers",
-  "timestamp": "2026-03-23T10:15:30Z",
+  "timestamp": "2026-03-25T10:15:30Z",
   "fieldErrors": null
 }
 ```
@@ -187,10 +247,9 @@ For validation failures (`400`), `fieldErrors` is populated:
   "error":  "Validation Failed",
   "message": "Request validation failed",
   "path":    "/api/auth/admin/couriers",
-  "timestamp": "2026-03-23T10:15:30Z",
+  "timestamp": "2026-03-25T10:15:30Z",
   "fieldErrors": {
-    "phone":               "must not be blank",
-    "vehicleType":         "must not be null",
+    "vehicleType":          "must not be null",
     "drivingLicenseNumber": "Driving licence details are required for vehicle type: SCOOTER"
   }
 }
@@ -200,10 +259,10 @@ For validation failures (`400`), `fieldErrors` is populated:
 
 | HTTP Status | When |
 |---|---|
-| `400 Bad Request` | Missing required field, invalid format, or driving licence not provided for motorized vehicle |
+| `400 Bad Request` | Missing required field, invalid format, driving licence not provided for motorized vehicle, or invalid image type/size |
 | `401 Unauthorized` | Missing or expired Keycloak token |
-| `403 Forbidden` | Token valid but role is insufficient (not `COURIER_ADMIN` or `ADMIN`) |
-| `409 Conflict` | Phone number is already registered |
+| `403 Forbidden` | Token valid but role is insufficient (`COURIER_ADMIN` or `ADMIN` required) |
+| `409 Conflict` | Phone number or license plate already registered |
 | `429 Too Many Requests` | More than 50 courier creations within 1 hour by the same admin |
 | `500 Internal Server Error` | Unexpected failure — retry once; if persists, contact the courier service team |
 
@@ -211,62 +270,94 @@ For validation failures (`400`), `fieldErrors` is populated:
 
 ## Integration Examples
 
-### Backend (Node.js / Express proxy — recommended)
+### Backend proxy — Spring Boot (Java)
 
-The ecommerce backend forwards the admin's Keycloak token to the courier service. The browser never calls the courier service directly.
+See [ecommerce_backend_courier_proxy_prompt.md](./ecommerce_backend_courier_proxy_prompt.md) for the full Java proxy implementation. The proxy receives multipart from the browser and forwards it to the courier service.
+
+### Backend proxy — Node.js / Express
 
 ```typescript
-// POST /admin/couriers  (ecommerce backend route)
-async function createCourier(req: Request, res: Response) {
-  const keycloakToken = req.headers.authorization; // forwarded from browser
+import multer from 'multer';
+import FormData from 'form-data';
+import fetch from 'node-fetch';
 
-  const courierRes = await fetch(
-    `${process.env.COURIER_SERVICE_URL}/api/auth/admin/couriers`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': keycloakToken,          // forward as-is
-        'X-Forwarded-For': req.ip,               // preserve original IP for audit log
-      },
-      body: JSON.stringify(req.body),
+const upload = multer({ storage: multer.memoryStorage() });
+
+router.post(
+  '/api/admin/couriers',
+  requireAdmin,
+  upload.fields([
+    { name: 'profileImage',        maxCount: 1 },
+    { name: 'vehicleRegistration', maxCount: 1 },
+    { name: 'drivingLicenceFront', maxCount: 1 },
+    { name: 'drivingLicenceBack',  maxCount: 1 },
+  ]),
+  async (req, res) => {
+    const form = new FormData();
+
+    // JSON part — must be sent with Content-Type: application/json
+    form.append('data', JSON.stringify(req.body), {
+      contentType: 'application/json',
+      filename: 'data.json',
+    });
+
+    // File parts — forward each uploaded file as-is
+    const files = req.files as Record<string, Express.Multer.File[]>;
+    for (const partName of ['profileImage', 'vehicleRegistration', 'drivingLicenceFront', 'drivingLicenceBack']) {
+      if (files[partName]?.[0]) {
+        const f = files[partName][0];
+        form.append(partName, f.buffer, {
+          filename: f.originalname,
+          contentType: f.mimetype,
+        });
+      }
     }
-  );
 
-  const data = await courierRes.json();
+    const upstream = await fetch(
+      `${process.env.COURIER_SERVICE_URL}/api/auth/admin/couriers`,
+      {
+        method: 'POST',
+        headers: {
+          ...form.getHeaders(),
+          Authorization: req.headers.authorization,   // forward Keycloak token as-is
+          'X-Forwarded-For': req.ip,
+        },
+        body: form,
+      }
+    );
 
-  if (!courierRes.ok) {
-    return res.status(courierRes.status).json(data); // pass error through
+    const data = await upstream.json();
+    res.status(upstream.status).json(data);
   }
-
-  return res.status(201).json(data);
-}
+);
 ```
 
-### Frontend (React/TypeScript — calls ecommerce backend proxy)
+### Frontend — React / TypeScript
 
 ```typescript
-// types
 type VehicleType = 'BICYCLE' | 'FOOT' | 'SCOOTER' | 'CAR';
 
-interface CreateCourierPayload {
-  firstName:       string;
-  lastName:        string;
-  phone:           string;
-  email?:          string;
-  profileImageUrl?: string;
-  initialPassword: string;
-  vehicleType:     VehicleType;
-  vehicleMake?:    string;
-  vehicleModel?:   string;
-  vehicleYear?:    number;
-  vehicleColor?:   string;
-  licensePlate?:   string;           // required if SCOOTER/CAR
-  vehicleRegistrationUrl?: string;
-  drivingLicenseNumber?:   string;   // required if SCOOTER/CAR
-  drivingLicenseExpiry?:   string;   // YYYY-MM-DD, required if SCOOTER/CAR
-  drivingLicenseFrontUrl?: string;
-  drivingLicenseBackUrl?:  string;
+interface CreateCourierFields {
+  firstName:             string;
+  lastName:              string;
+  phone:                 string;
+  email?:                string;
+  initialPassword:       string;
+  vehicleType:           VehicleType;
+  vehicleMake?:          string;
+  vehicleModel?:         string;
+  vehicleYear?:          number;
+  vehicleColor?:         string;
+  licensePlate?:         string;   // required if SCOOTER/CAR
+  drivingLicenseNumber?: string;   // required if SCOOTER/CAR
+  drivingLicenseExpiry?: string;   // YYYY-MM-DD, required if SCOOTER/CAR
+}
+
+interface CreateCourierFiles {
+  profileImage?:        File;
+  vehicleRegistration?: File;
+  drivingLicenceFront?: File;      // required if SCOOTER/CAR
+  drivingLicenceBack?:  File;      // required if SCOOTER/CAR
 }
 
 interface CourierSignupResponse {
@@ -279,15 +370,26 @@ interface CourierSignupResponse {
   requiresDrivingLicense: boolean;
 }
 
-// api call
 async function createCourier(
-  payload: CreateCourierPayload
+  fields: CreateCourierFields,
+  files:  CreateCourierFiles,
 ): Promise<CourierSignupResponse> {
-  const res = await fetch('/api/admin/couriers', {   // your ecommerce backend route
+  const form = new FormData();
+
+  // JSON fields go in the "data" part
+  form.append('data', new Blob([JSON.stringify(fields)], { type: 'application/json' }));
+
+  // Attach files only if provided
+  if (files.profileImage)        form.append('profileImage',        files.profileImage);
+  if (files.vehicleRegistration) form.append('vehicleRegistration', files.vehicleRegistration);
+  if (files.drivingLicenceFront) form.append('drivingLicenceFront', files.drivingLicenceFront);
+  if (files.drivingLicenceBack)  form.append('drivingLicenceBack',  files.drivingLicenceBack);
+
+  const res = await fetch('/api/admin/couriers', {   // ecommerce backend proxy
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    credentials: 'include',                          // sends session cookie to ecommerce backend
-    body: JSON.stringify(payload),
+    credentials: 'include',                          // session cookie → ecommerce backend
+    body: form,
+    // Do NOT set Content-Type manually — the browser sets the boundary automatically
   });
 
   if (!res.ok) {
@@ -298,12 +400,11 @@ async function createCourier(
   return res.json();
 }
 
-// custom error class
 class CourierApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public fieldErrors?: Record<string, string>
+    public fieldErrors?: Record<string, string>,
   ) {
     super(message);
   }
@@ -313,27 +414,34 @@ class CourierApiError extends Error {
 ### Frontend — form validation helper
 
 ```typescript
-function validateCourierForm(data: Partial<CreateCourierPayload>): Record<string, string> {
+function validateCourierForm(
+  fields: Partial<CreateCourierFields>,
+  files:  Partial<CreateCourierFiles>,
+): Record<string, string> {
   const errors: Record<string, string> = {};
-  const motorized = data.vehicleType === 'SCOOTER' || data.vehicleType === 'CAR';
+  const motorized = fields.vehicleType === 'SCOOTER' || fields.vehicleType === 'CAR';
 
-  if (!data.firstName?.trim())       errors.firstName       = 'First name is required';
-  if (!data.lastName?.trim())        errors.lastName        = 'Last name is required';
-  if (!data.phone?.trim())           errors.phone           = 'Phone number is required';
-  if (!data.vehicleType)             errors.vehicleType     = 'Vehicle type is required';
-  if (!data.initialPassword)         errors.initialPassword = 'Initial password is required';
-  if ((data.initialPassword?.length ?? 0) < 8)
-                                     errors.initialPassword = 'Password must be at least 8 characters';
+  if (!fields.firstName?.trim())       errors.firstName       = 'First name is required';
+  if (!fields.lastName?.trim())        errors.lastName        = 'Last name is required';
+  if (!fields.phone?.trim())           errors.phone           = 'Phone number is required';
+  if (!fields.vehicleType)             errors.vehicleType     = 'Vehicle type is required';
+  if (!fields.initialPassword)         errors.initialPassword = 'Initial password is required';
+  if ((fields.initialPassword?.length ?? 0) < 8)
+                                       errors.initialPassword = 'Password must be at least 8 characters';
 
   if (motorized) {
-    if (!data.licensePlate?.trim())
+    if (!fields.licensePlate?.trim())
       errors.licensePlate = 'License plate is required for motorized vehicles';
-    if (!data.drivingLicenseNumber?.trim())
+    if (!fields.drivingLicenseNumber?.trim())
       errors.drivingLicenseNumber = 'Driving licence number is required';
-    if (!data.drivingLicenseExpiry)
+    if (!fields.drivingLicenseExpiry)
       errors.drivingLicenseExpiry = 'Driving licence expiry date is required';
-    if (data.drivingLicenseExpiry && new Date(data.drivingLicenseExpiry) <= new Date())
+    if (fields.drivingLicenseExpiry && new Date(fields.drivingLicenseExpiry) <= new Date())
       errors.drivingLicenseExpiry = 'Driving licence must not be expired';
+    if (!files.drivingLicenceFront)
+      errors.drivingLicenceFront = 'Driving licence front image is required';
+    if (!files.drivingLicenceBack)
+      errors.drivingLicenceBack = 'Driving licence back image is required';
   }
 
   return errors;
@@ -351,7 +459,8 @@ function validateCourierForm(data: Partial<CreateCourierPayload>): Record<string
 │  PERSONAL DETAILS                                           │
 │  First Name *          Last Name *                          │
 │  Phone *               Email                                │
-│  Profile Image URL     Initial Password *                   │
+│  Initial Password *                                         │
+│  Profile Photo    [ Choose file ]  (optional, JPEG/PNG/WebP)│
 │                                                             │
 │  VEHICLE                                                    │
 │  Vehicle Type *  [ BICYCLE | FOOT | SCOOTER | CAR ]         │
@@ -359,20 +468,58 @@ function validateCourierForm(data: Partial<CreateCourierPayload>): Record<string
 │                                                             │
 │  ── shown only when SCOOTER or CAR is selected ──           │
 │  License Plate *                                            │
-│  Registration Document URL                                  │
+│  Vehicle Registration  [ Choose file ]  (optional)         │
 │  Driving Licence Number *   Expiry Date *                   │
-│  Licence Front Scan URL     Licence Back Scan URL           │
+│  Licence Front *  [ Choose file ]   (required, JPEG/PNG/WebP│
+│  Licence Back  *  [ Choose file ]   (required, JPEG/PNG/WebP│
 │                                                             │
 │  [ Cancel ]                         [ Create Courier ]      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **UX notes:**
-- Hide the driving licence section entirely when `BICYCLE` or `FOOT` is selected
-- Show a password strength indicator — the courier will use this password to log in to the courier mobile app
-- After success, display the `courierId` and a reminder to share the initial password with the courier through a secure channel (never show the password again after submission)
+- Hide the entire driving licence section when `BICYCLE` or `FOOT` is selected
+- Show a password strength indicator — the courier uses this password to log in to the courier mobile app
+- After success, display the `courierId` and remind the operator to share the initial password through a secure out-of-band channel (never show the password again after submission)
 - On `409 Conflict`, show: _"A courier with this phone number already exists"_
 - On `429 Too Many Requests`, show: _"Too many couriers created recently. Please wait before adding more."_
+- On `400` with `fieldErrors`, map each field error back to its form field and highlight it
+
+---
+
+## Viewing Courier Images
+
+After a courier is created, image URLs are returned by `GET /api/v1/couriers/{id}`:
+
+```typescript
+interface CourierResponse {
+  id:                     string;
+  firstName:              string;
+  lastName:               string;
+  phone:                  string;
+  email:                  string | null;
+  vehicleType:            VehicleType;
+  status:                 'ACTIVE' | 'OFFLINE' | 'SUSPENDED';
+  isAvailable:            boolean;
+  rating:                 number | null;
+  profileImageUrl:        string | null;   // relative path, e.g. /uploads/couriers/profile/abc.jpg
+  drivingLicenceImageUrl: string | null;   // relative path, front face only
+  createdAt:              string;          // ISO-8601
+  updatedAt:              string;          // ISO-8601
+}
+```
+
+Build full image URLs by prepending the courier service base URL:
+
+```typescript
+const profileSrc = courier.profileImageUrl
+  ? `${COURIER_SERVICE_URL}${courier.profileImageUrl}`
+  : '/assets/default-avatar.png';
+
+const licenceSrc = courier.drivingLicenceImageUrl
+  ? `${COURIER_SERVICE_URL}${courier.drivingLicenceImageUrl}`
+  : null;
+```
 
 ---
 
@@ -410,5 +557,5 @@ The ecommerce admin panel does **not** need to call this endpoint — it is used
 |---|---|
 | Endpoint behaviour / bugs | Courier service team |
 | Keycloak role setup | DevOps / IAM team |
-| File upload URLs (licence scans) | Storage service team |
+| Image storage / CDN migration | Courier service team |
 | Mobile app integration | Courier mobile team |

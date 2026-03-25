@@ -1,4 +1,4 @@
-# Prompt: Implement Courier Creation Proxy in Ecommerce Backend
+# Prompt: Implement Courier Proxy in Ecommerce Backend
 
 Copy and paste this entire prompt into the ecommerce backend project.
 
@@ -13,25 +13,37 @@ The architecture is:
 ```
 Admin Browser
      │
-     │  POST /api/admin/couriers   (this service — ecommerce backend)
-     │  multipart/form-data + Cookie/session auth
+     │  /api/admin/couriers/**   (this service — ecommerce backend)
+     │  Cookie/session auth
      │
      ▼
 Ecommerce Backend  ──────────────────────────────────→  buyology-courier-service
-                    POST /api/auth/admin/couriers
+                    /api/auth/admin/couriers  (create)
+                    /api/v1/couriers/**       (read / update / delete)
                     Authorization: Bearer <admin Keycloak JWT forwarded>
-                    Content-Type: multipart/form-data
 ```
 
-The admin's Keycloak JWT must be forwarded as-is to the courier service so the courier service can validate the admin's identity and write it to its audit log. The admin browser must never call the courier service directly.
+The admin's Keycloak JWT must be forwarded as-is to the courier service. The admin browser must never call the courier service directly.
+
+---
+
+## Endpoints to proxy
+
+| Ecommerce backend route | Courier service route | Notes |
+|---|---|---|
+| `POST   /api/admin/couriers` | `POST /api/auth/admin/couriers` | **multipart/form-data** — full onboarding with credentials |
+| `GET    /api/admin/couriers` | `GET /api/v1/couriers` | List couriers with optional filters |
+| `GET    /api/admin/couriers/{id}` | `GET /api/v1/couriers/{id}` | Get courier by ID, includes image URLs |
+| `PATCH  /api/admin/couriers/{id}` | `PATCH /api/v1/couriers/{id}` | **multipart/form-data** — update profile fields and/or images |
+| `PATCH  /api/admin/couriers/{id}/status` | `PATCH /api/v1/couriers/{id}/status` | JSON body — update operational status |
+| `PATCH  /api/admin/couriers/{id}/availability` | `PATCH /api/v1/couriers/{id}/availability` | JSON body — toggle availability |
+| `DELETE /api/admin/couriers/{id}` | `DELETE /api/v1/couriers/{id}` | Soft delete |
 
 ---
 
 ## What to implement
 
 ### 1. Add dependency (if not already present)
-
-You need Spring WebFlux `WebClient` for the HTTP proxy call (non-blocking). If the project is servlet-based (Spring MVC), add it without replacing the server:
 
 ```xml
 <!-- pom.xml -->
@@ -41,9 +53,15 @@ You need Spring WebFlux `WebClient` for the HTTP proxy call (non-blocking). If t
 </dependency>
 ```
 
-Or if using Gradle:
+Gradle:
 ```groovy
 implementation 'org.springframework.boot:spring-boot-starter-webflux'
+```
+
+Also add multipart size limits:
+```properties
+spring.servlet.multipart.max-file-size=10MB
+spring.servlet.multipart.max-request-size=50MB
 ```
 
 ---
@@ -51,18 +69,15 @@ implementation 'org.springframework.boot:spring-boot-starter-webflux'
 ### 2. Add configuration properties
 
 ```properties
-# application.properties
 courier.service.url=${COURIER_SERVICE_URL:http://localhost:8081}
-
-# Timeout for courier service calls (milliseconds)
 courier.service.timeout-ms=${COURIER_SERVICE_TIMEOUT_MS:10000}
 ```
 
 ---
 
-### 3. Create `CourierServiceClient` (WebClient wrapper)
+### 3. Create `CourierServiceClient`
 
-Create a new file: `src/main/java/.../courier/CourierServiceClient.java`
+`src/main/java/.../courier/CourierServiceClient.java`
 
 ```java
 @Component
@@ -80,31 +95,89 @@ public class CourierServiceClient {
                 .build();
     }
 
-    /**
-     * Forward a courier creation multipart request to the courier service.
-     *
-     * @param multipartBody  the MultiValueMap built from the admin's form submission
-     * @param bearerToken    the admin's Keycloak JWT (full "Bearer <token>" header value)
-     * @param clientIp       original client IP — forwarded for audit log accuracy
-     * @return ResponseEntity with the courier service response body and status code
-     */
-    public ResponseEntity<String> createCourier(
-            MultiValueMap<String, HttpEntity<?>> multipartBody,
+    /** Forward a multipart request (create or update). */
+    public ResponseEntity<String> forwardMultipart(
+            String uri,
+            MultiValueMap<String, HttpEntity<?>> body,
             String bearerToken,
             String clientIp
     ) {
-        try {
-            return webClient.post()
-                    .uri("/api/auth/admin/couriers")
-                    .header(HttpHeaders.AUTHORIZATION, bearerToken)
+        return execute(
+                webClient.post()
+                        .uri(uri)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken)
+                        .header("X-Forwarded-For", clientIp)
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .bodyValue(body)
+        );
+    }
+
+    /** Forward a multipart PATCH request. */
+    public ResponseEntity<String> forwardMultipartPatch(
+            String uri,
+            MultiValueMap<String, HttpEntity<?>> body,
+            String bearerToken,
+            String clientIp
+    ) {
+        return execute(
+                webClient.patch()
+                        .uri(uri)
+                        .header(HttpHeaders.AUTHORIZATION, bearerToken)
+                        .header("X-Forwarded-For", clientIp)
+                        .contentType(MediaType.MULTIPART_FORM_DATA)
+                        .bodyValue(body)
+        );
+    }
+
+    /** Forward a JSON body request (POST/PATCH). */
+    public ResponseEntity<String> forwardJson(
+            String method,
+            String uri,
+            Object body,
+            String bearerToken,
+            String clientIp
+    ) {
+        WebClient.RequestBodySpec spec = switch (method.toUpperCase()) {
+            case "POST"  -> webClient.post().uri(uri);
+            case "PATCH" -> webClient.patch().uri(uri);
+            default      -> throw new IllegalArgumentException("Unsupported method: " + method);
+        };
+        return execute(
+                spec.header(HttpHeaders.AUTHORIZATION, bearerToken)
                     .header("X-Forwarded-For", clientIp)
-                    .contentType(MediaType.MULTIPART_FORM_DATA)
-                    .bodyValue(multipartBody)
-                    .retrieve()
-                    .onStatus(status -> status.is4xxClientError() || status.is5xxServerError(),
-                            clientResponse -> clientResponse.bodyToMono(String.class)
-                                    .map(body -> new CourierServiceException(
-                                            clientResponse.statusCode().value(), body)))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
+        );
+    }
+
+    /** Forward a no-body request (GET / DELETE). */
+    public ResponseEntity<String> forwardNoBody(
+            String method,
+            String uri,
+            String queryString,
+            String bearerToken,
+            String clientIp
+    ) {
+        String fullUri = (queryString != null && !queryString.isBlank()) ? uri + "?" + queryString : uri;
+        WebClient.RequestHeadersSpec<?> spec = switch (method.toUpperCase()) {
+            case "GET"    -> webClient.get().uri(fullUri);
+            case "DELETE" -> webClient.delete().uri(fullUri);
+            default       -> throw new IllegalArgumentException("Unsupported method: " + method);
+        };
+        return execute(
+                spec.header(HttpHeaders.AUTHORIZATION, bearerToken)
+                    .header("X-Forwarded-For", clientIp)
+        );
+    }
+
+    // ── shared execute ────────────────────────────────────────────────────────
+
+    private ResponseEntity<String> execute(WebClient.RequestHeadersSpec<?> spec) {
+        try {
+            return spec.retrieve()
+                    .onStatus(s -> s.is4xxClientError() || s.is5xxServerError(),
+                            r -> r.bodyToMono(String.class)
+                                    .map(b -> new CourierServiceException(r.statusCode().value(), b)))
                     .toEntity(String.class)
                     .timeout(Duration.ofMillis(timeoutMs))
                     .block();
@@ -120,7 +193,7 @@ public class CourierServiceClient {
 }
 ```
 
-Also create the exception class in the same package:
+Exception class (same package):
 
 ```java
 public class CourierServiceException extends RuntimeException {
@@ -142,33 +215,32 @@ public class CourierServiceException extends RuntimeException {
 
 ### 4. Create `AdminCourierController`
 
-Create a new file: `src/main/java/.../courier/AdminCourierController.java`
-
-The controller accepts a multipart form from the admin browser and proxies it to the courier service.
+`src/main/java/.../courier/AdminCourierController.java`
 
 ```java
 @RestController
 @RequestMapping("/api/admin/couriers")
 @RequiredArgsConstructor
-@Tag(name = "Admin — Couriers", description = "Admin operations for managing courier accounts.")
+@Tag(name = "Admin — Couriers", description = "Admin proxy to buyology-courier-service.")
 public class AdminCourierController {
 
     private final CourierServiceClient courierServiceClient;
-    private final ObjectMapper objectMapper;
+    private final ObjectMapper         objectMapper;
 
-    /**
-     * Create a new courier account.
-     *
-     * Request format: multipart/form-data
-     *   - Part "data"                — JSON string of CreateCourierRequest fields
-     *   - Part "profileImage"        — profile photo (JPEG/PNG/WebP, max 10 MB, optional)
-     *   - Part "vehicleRegistration" — vehicle registration doc (optional)
-     *   - Part "drivingLicenceFront" — driving licence front (required for SCOOTER/CAR)
-     *   - Part "drivingLicenceBack"  — driving licence back  (required for SCOOTER/CAR)
-     */
+    // ── POST /api/admin/couriers ───────────────────────────────────────────────
+    // Proxies → POST /api/auth/admin/couriers
+    //
+    // multipart/form-data parts:
+    //   "data"                — JSON (CourierSignupRequest fields, see DTO section)
+    //   "profileImage"        — profile photo       (JPEG/PNG/WebP, ≤10 MB, optional)
+    //   "vehicleRegistration" — registration doc    (JPEG/PNG/WebP, ≤10 MB, optional)
+    //   "drivingLicenceFront" — licence front image (JPEG/PNG/WebP, ≤10 MB, required for SCOOTER/CAR)
+    //   "drivingLicenceBack"  — licence back image  (JPEG/PNG/WebP, ≤10 MB, required for SCOOTER/CAR)
+
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
-    @Operation(summary = "Create a new courier (admin only) — multipart form")
+    @Operation(summary = "Create a new courier — multipart form")
     public ResponseEntity<Object> createCourier(
             @RequestPart("data") String dataJson,
             @RequestPart(value = "profileImage",        required = false) MultipartFile profileImage,
@@ -178,24 +250,129 @@ public class AdminCourierController {
             @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
             HttpServletRequest httpRequest
     ) throws IOException {
-        // Build a multipart body to forward to the courier service
         MultiValueMap<String, HttpEntity<?>> body = new LinkedMultiValueMap<>();
-        body.add("data", new HttpEntity<>(dataJson,
-                jsonPartHeaders()));
+        body.add("data", new HttpEntity<>(dataJson, jsonHeaders()));
         addFilePart(body, "profileImage",        profileImage);
         addFilePart(body, "vehicleRegistration", vehicleRegistration);
         addFilePart(body, "drivingLicenceFront", drivingLicenceFront);
         addFilePart(body, "drivingLicenceBack",  drivingLicenceBack);
 
-        String clientIp = resolveClientIp(httpRequest);
-        ResponseEntity<String> upstream = courierServiceClient.createCourier(body, bearerToken, clientIp);
+        return parsed(courierServiceClient.forwardMultipart(
+                "/api/auth/admin/couriers", body, bearerToken, clientIp(httpRequest)));
+    }
 
-        try {
-            Object parsed = objectMapper.readValue(upstream.getBody(), Object.class);
-            return ResponseEntity.status(upstream.getStatusCode()).body(parsed);
-        } catch (Exception e) {
-            return ResponseEntity.status(upstream.getStatusCode()).body(upstream.getBody());
-        }
+    // ── GET /api/admin/couriers ────────────────────────────────────────────────
+    // Proxies → GET /api/v1/couriers
+    // Query params: status, vehicleType, isAvailable, page, size, sort  (forwarded as-is)
+
+    @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "List couriers with optional filters")
+    public ResponseEntity<Object> listCouriers(
+            HttpServletRequest httpRequest,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken
+    ) {
+        return parsed(courierServiceClient.forwardNoBody(
+                "GET", "/api/v1/couriers",
+                httpRequest.getQueryString(), bearerToken, clientIp(httpRequest)));
+    }
+
+    // ── GET /api/admin/couriers/{id} ───────────────────────────────────────────
+    // Proxies → GET /api/v1/couriers/{id}
+    // Response includes profileImageUrl and drivingLicenceImageUrl (relative paths)
+
+    @GetMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Get courier by ID — includes image URLs")
+    public ResponseEntity<Object> getCourier(
+            @PathVariable UUID id,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+            HttpServletRequest httpRequest
+    ) {
+        return parsed(courierServiceClient.forwardNoBody(
+                "GET", "/api/v1/couriers/" + id,
+                null, bearerToken, clientIp(httpRequest)));
+    }
+
+    // ── PATCH /api/admin/couriers/{id} ─────────────────────────────────────────
+    // Proxies → PATCH /api/v1/couriers/{id}
+    //
+    // multipart/form-data parts (all optional — only provided fields are updated):
+    //   "data"               — JSON (UpdateCourierRequest fields, see DTO section)
+    //   "profileImage"       — new profile photo        (JPEG/PNG/WebP, ≤10 MB)
+    //   "drivingLicenceImage"— new driving licence image (JPEG/PNG/WebP, ≤10 MB)
+
+    @PatchMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Update courier profile fields and/or images — multipart form")
+    public ResponseEntity<Object> updateCourier(
+            @PathVariable UUID id,
+            @RequestPart("data") String dataJson,
+            @RequestPart(value = "profileImage",        required = false) MultipartFile profileImage,
+            @RequestPart(value = "drivingLicenceImage", required = false) MultipartFile drivingLicenceImage,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+            HttpServletRequest httpRequest
+    ) throws IOException {
+        MultiValueMap<String, HttpEntity<?>> body = new LinkedMultiValueMap<>();
+        body.add("data", new HttpEntity<>(dataJson, jsonHeaders()));
+        addFilePart(body, "profileImage",        profileImage);
+        addFilePart(body, "drivingLicenceImage", drivingLicenceImage);
+
+        return parsed(courierServiceClient.forwardMultipartPatch(
+                "/api/v1/couriers/" + id, body, bearerToken, clientIp(httpRequest)));
+    }
+
+    // ── PATCH /api/admin/couriers/{id}/status ──────────────────────────────────
+    // Proxies → PATCH /api/v1/couriers/{id}/status
+    // Body: { "status": "ACTIVE" | "OFFLINE" | "SUSPENDED" }
+
+    @PatchMapping("/{id}/status")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Update courier operational status")
+    public ResponseEntity<Object> updateStatus(
+            @PathVariable UUID id,
+            @RequestBody Object body,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+            HttpServletRequest httpRequest
+    ) {
+        return parsed(courierServiceClient.forwardJson(
+                "PATCH", "/api/v1/couriers/" + id + "/status",
+                body, bearerToken, clientIp(httpRequest)));
+    }
+
+    // ── PATCH /api/admin/couriers/{id}/availability ────────────────────────────
+    // Proxies → PATCH /api/v1/couriers/{id}/availability
+    // Body: { "available": true | false }
+
+    @PatchMapping("/{id}/availability")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Toggle courier availability")
+    public ResponseEntity<Object> updateAvailability(
+            @PathVariable UUID id,
+            @RequestBody Object body,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+            HttpServletRequest httpRequest
+    ) {
+        return parsed(courierServiceClient.forwardJson(
+                "PATCH", "/api/v1/couriers/" + id + "/availability",
+                body, bearerToken, clientIp(httpRequest)));
+    }
+
+    // ── DELETE /api/admin/couriers/{id} ────────────────────────────────────────
+    // Proxies → DELETE /api/v1/couriers/{id}
+    // Returns 204 No Content
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Soft-delete a courier")
+    public ResponseEntity<Object> deleteCourier(
+            @PathVariable UUID id,
+            @RequestHeader(HttpHeaders.AUTHORIZATION) String bearerToken,
+            HttpServletRequest httpRequest
+    ) {
+        return parsed(courierServiceClient.forwardNoBody(
+                "DELETE", "/api/v1/couriers/" + id,
+                null, bearerToken, clientIp(httpRequest)));
     }
 
     // ── helpers ────────────────────────────────────────────────────────────────
@@ -210,17 +387,24 @@ public class AdminCourierController {
         body.add(partName, new HttpEntity<>(file.getResource(), headers));
     }
 
-    private HttpHeaders jsonPartHeaders() {
+    private HttpHeaders jsonHeaders() {
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
         return h;
     }
 
-    private String resolveClientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
+    private ResponseEntity<Object> parsed(ResponseEntity<String> upstream) {
+        try {
+            Object parsed = objectMapper.readValue(upstream.getBody(), Object.class);
+            return ResponseEntity.status(upstream.getStatusCode()).body(parsed);
+        } catch (Exception e) {
+            return ResponseEntity.status(upstream.getStatusCode()).body(upstream.getBody());
         }
+    }
+
+    private String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        if (forwarded != null && !forwarded.isBlank()) return forwarded.split(",")[0].trim();
         return request.getRemoteAddr();
     }
 }
@@ -228,107 +412,77 @@ public class AdminCourierController {
 
 ---
 
-### 5. Create `CreateCourierRequest` DTO (JSON part — no image URLs)
+### 5. DTOs
 
-Create a new file: `src/main/java/.../courier/dto/CreateCourierRequest.java`
-
-This mirrors the courier service's `CourierSignupRequest` (text fields only — images come as file parts).
+#### `CreateCourierRequest` — used as the `"data"` JSON part of `POST /api/admin/couriers`
 
 ```java
 @Builder
 public record CreateCourierRequest(
 
-        // Personal details
-        @NotBlank @Size(max = 100)
-        String firstName,
+        @NotBlank @Size(max = 100) String firstName,
+        @NotBlank @Size(max = 100) String lastName,
+        @NotBlank @Size(max = 30)  String phone,
+        @Email    @Size(max = 150) String email,
 
-        @NotBlank @Size(max = 100)
-        String lastName,
+        @NotBlank @Size(min = 8, max = 100) String initialPassword,
 
-        @NotBlank @Size(max = 30)
-        String phone,
-
-        @Email @Size(max = 150)
-        String email,
-
-        // Auth
-        @NotBlank @Size(min = 8, max = 100)
-        String initialPassword,
-
-        // Vehicle
-        @NotNull
-        VehicleType vehicleType,
+        @NotNull VehicleType vehicleType,
 
         @Size(max = 100) String vehicleMake,
         @Size(max = 100) String vehicleModel,
         @Min(1900) @Max(2100) Integer vehicleYear,
-        @Size(max = 50)  String vehicleColor,
-        @Size(max = 50)  String licensePlate,
+        @Size(max = 50) String vehicleColor,
+        @Size(max = 50) String licensePlate,          // required for SCOOTER/CAR
 
-        // Driving licence text fields (required for SCOOTER / CAR)
-        @Size(max = 100) String drivingLicenseNumber,
-        LocalDate drivingLicenseExpiry
+        @Size(max = 100) String drivingLicenseNumber, // required for SCOOTER/CAR
+        LocalDate drivingLicenseExpiry                // required for SCOOTER/CAR
 ) {}
 ```
 
-Also create the `VehicleType` enum in the same package:
+#### `UpdateCourierRequest` — used as the `"data"` JSON part of `PATCH /api/admin/couriers/{id}`
+
+All fields are optional — only non-null values are applied.
 
 ```java
-public enum VehicleType {
-    BICYCLE,
-    FOOT,
-    SCOOTER,
-    CAR
-}
+@Builder
+public record UpdateCourierRequest(
+        @Size(max = 100) String firstName,
+        @Size(max = 100) String lastName,
+        @Email @Size(max = 150) String email,
+        VehicleType vehicleType
+) {}
+```
+
+#### `VehicleType` enum (used by both DTOs)
+
+```java
+public enum VehicleType { BICYCLE, FOOT, SCOOTER, CAR }
 ```
 
 ---
 
-### 6. Ensure SecurityConfig permits the new endpoint correctly
+### 6. SecurityConfig
 
-In your existing `SecurityConfig`, the new endpoint `/api/admin/couriers` is already covered by `anyRequest().authenticated()` + the `@PreAuthorize` on the controller. No change needed unless you have explicit path-based rules that need updating.
-
-Also add multipart size limits if not already present:
-
-```properties
-spring.servlet.multipart.max-file-size=10MB
-spring.servlet.multipart.max-request-size=50MB
-```
+No path-based rule change needed — `@PreAuthorize` on each method handles access control. Verify `@EnableMethodSecurity` is present on your security config class.
 
 ---
 
-## Expected request/response
+## Request / Response Reference
 
-### Request
+### `POST /api/admin/couriers` — Create courier
 
-```
-POST /api/admin/couriers
-Authorization: Bearer <keycloak-token>
-Content-Type: multipart/form-data; boundary=----...
+**Request** — `multipart/form-data`:
 
-------...
-Content-Disposition: form-data; name="data"
-Content-Type: application/json
+| Part | Type | Required | Notes |
+|---|---|---|---|
+| `data` | JSON string | ✅ | Fields from `CreateCourierRequest` above |
+| `profileImage` | image file | ❌ | JPEG, PNG, or WebP — max 10 MB |
+| `vehicleRegistration` | image file | ❌ | JPEG, PNG, or WebP — max 10 MB |
+| `drivingLicenceFront` | image file | ✅ if SCOOTER/CAR | JPEG, PNG, or WebP — max 10 MB |
+| `drivingLicenceBack` | image file | ✅ if SCOOTER/CAR | JPEG, PNG, or WebP — max 10 MB |
 
-{"firstName":"John","lastName":"Smith","phone":"+994501234567",
- "email":"john@example.com","initialPassword":"Secure#Pass1",
- "vehicleType":"SCOOTER","licensePlate":"10 BB 456",
- "drivingLicenseNumber":"DL-7654321","drivingLicenseExpiry":"2029-03-15"}
-------...
-Content-Disposition: form-data; name="profileImage"; filename="john.jpg"
-Content-Type: image/jpeg
-
-<binary image data>
-------...
-Content-Disposition: form-data; name="drivingLicenceFront"; filename="licence_front.jpg"
-Content-Type: image/jpeg
-
-<binary image data>
-------...--
-```
-
-### Success `201 Created`
-
+**Success `201 Created`**:
 ```json
 {
   "courierId":              "3fa85f64-5717-4562-b3fc-2c963f66afa6",
@@ -341,70 +495,140 @@ Content-Type: image/jpeg
 }
 ```
 
-### GET courier details — `200 OK`
+---
 
-When fetching a courier (`GET /api/v1/couriers/{id}`), the response now includes image URLs:
+### `GET /api/admin/couriers/{id}` — Get courier details
 
+**Success `200 OK`**:
 ```json
 {
-  "id":                    "3fa85f64-5717-4562-b3fc-2c963f66afa6",
-  "firstName":             "John",
-  "lastName":              "Smith",
-  "phone":                 "+994501234567",
-  "email":                 "john@example.com",
-  "vehicleType":           "SCOOTER",
-  "status":                "OFFLINE",
-  "isAvailable":           false,
-  "rating":                null,
-  "profileImageUrl":       "/uploads/couriers/profile/a1b2c3.jpg",
+  "id":                     "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "firstName":              "John",
+  "lastName":               "Smith",
+  "phone":                  "+994501234567",
+  "email":                  "john@example.com",
+  "vehicleType":            "SCOOTER",
+  "status":                 "OFFLINE",
+  "isAvailable":            false,
+  "rating":                 null,
+  "profileImageUrl":        "/uploads/couriers/profile/a1b2c3.jpg",
   "drivingLicenceImageUrl": "/uploads/couriers/licence/d4e5f6.jpg",
-  "createdAt":             "2026-03-25T10:00:00Z",
-  "updatedAt":             "2026-03-25T10:00:00Z"
+  "createdAt":              "2026-03-25T10:00:00Z",
+  "updatedAt":              "2026-03-25T10:00:00Z"
 }
 ```
 
-Image URLs are relative paths on the courier service. Prefix with `COURIER_SERVICE_URL` to build the full URL when displaying in the admin UI:
-
+`profileImageUrl` and `drivingLicenceImageUrl` are relative paths on the courier service. Build full URLs for display:
 ```javascript
-const imageUrl = `${COURIER_SERVICE_URL}${courier.profileImageUrl}`;
+const src = courier.profileImageUrl
+  ? `${process.env.COURIER_SERVICE_URL}${courier.profileImageUrl}`
+  : null;
 ```
 
-### Errors — passed through as-is from courier service
+---
 
-| Status | Meaning |
-|--------|---------|
-| `400`  | Validation failed — missing fields or driving licence not provided for motorized vehicle |
-| `400`  | Unsupported image type (only JPEG, PNG, WebP allowed; max 10 MB) |
-| `401`  | Admin token expired or missing |
-| `403`  | Admin token valid but role is insufficient |
-| `409`  | Phone number already registered |
-| `429`  | Admin rate limit exceeded (50 couriers/hour) |
-| `502`  | Courier service unreachable |
+### `PATCH /api/admin/couriers/{id}` — Update courier
+
+**Request** — `multipart/form-data`:
+
+| Part | Type | Required | Notes |
+|---|---|---|---|
+| `data` | JSON string | ✅ | Fields from `UpdateCourierRequest` above — omit or null any field to leave it unchanged |
+| `profileImage` | image file | ❌ | Replaces existing profile photo |
+| `drivingLicenceImage` | image file | ❌ | Replaces existing driving licence image |
+
+**Success `200 OK`** — same shape as GET response above.
+
+---
+
+### `PATCH /api/admin/couriers/{id}/status` — Update status
+
+**Request** — `application/json`:
+```json
+{ "status": "ACTIVE" }
+```
+Valid values: `ACTIVE`, `OFFLINE`, `SUSPENDED`
+
+---
+
+### `PATCH /api/admin/couriers/{id}/availability` — Toggle availability
+
+**Request** — `application/json`:
+```json
+{ "available": true }
+```
+Availability can only be set to `true` when status is `ACTIVE`. The courier service enforces this.
+
+---
+
+### `DELETE /api/admin/couriers/{id}` — Soft delete
+
+**Success `204 No Content`** — no body.
+
+---
+
+### `GET /api/admin/couriers` — List couriers
+
+**Query parameters** (all optional, forwarded as-is to courier service):
+
+| Param | Type | Example |
+|---|---|---|
+| `status` | enum | `ACTIVE`, `OFFLINE`, `SUSPENDED` |
+| `vehicleType` | enum | `BICYCLE`, `FOOT`, `SCOOTER`, `CAR` |
+| `isAvailable` | boolean | `true` |
+| `page` | integer | `0` |
+| `size` | integer | `20` |
+| `sort` | string | `createdAt,desc` |
+
+**Success `200 OK`** — paginated list:
+```json
+{
+  "content": [ /* CourierResponse objects */ ],
+  "totalElements": 42,
+  "totalPages": 3,
+  "size": 20,
+  "number": 0
+}
+```
+
+---
+
+## Error responses — passed through as-is
+
+| Status | When |
+|---|---|
+| `400` | Validation failed — missing required field, invalid format, driving licence not provided for motorized vehicle, or invalid image type/size |
+| `401` | Admin token expired or missing |
+| `403` | Token valid but role insufficient (`COURIER_ADMIN` or `ADMIN` required) |
+| `409` | Phone number or license plate already registered |
+| `429` | More than 50 courier creations per hour by the same admin |
+| `502` | Courier service unreachable |
 
 ---
 
 ## Driving licence rule — apply in frontend form
 
 ```javascript
-if (vehicleType === 'SCOOTER' || vehicleType === 'CAR') {
-    // require: licensePlate, drivingLicenseNumber, drivingLicenseExpiry
-    // require file inputs: drivingLicenceFront, drivingLicenceBack
+const motorized = vehicleType === 'SCOOTER' || vehicleType === 'CAR';
+
+if (motorized) {
+  // require fields:      licensePlate, drivingLicenseNumber, drivingLicenseExpiry
+  // require file inputs: drivingLicenceFront, drivingLicenceBack
 } else {
-    // hide all driving licence + license plate fields
-    // hide drivingLicenceFront and drivingLicenceBack file inputs
+  // hide all driving licence fields and file inputs
 }
 ```
 
 ---
 
-## Environment variables to set
+## Environment variables
 
 | Variable | Dev default | Description |
-|----------|------------|-------------|
+|---|---|---|
 | `COURIER_SERVICE_URL` | `http://localhost:8081` | Internal URL of buyology-courier-service |
 | `COURIER_SERVICE_TIMEOUT_MS` | `10000` | Max ms to wait for courier service response |
 
-In Docker Compose, use the service name:
+Docker Compose:
 ```yaml
 environment:
   COURIER_SERVICE_URL: http://buyology-courier-service:8081
@@ -416,6 +640,7 @@ environment:
 
 - Do not store or re-sign the Keycloak JWT — forward it exactly as received in the `Authorization` header
 - Do not call the courier service from the browser — this proxy is the only caller
-- Do not add the courier service URL to any frontend config or `.env` file
-- Do not catch and hide errors from the courier service — pass the status code and body through so the frontend can show the right message
+- Do not add `COURIER_SERVICE_URL` to any frontend config or `.env` file
+- Do not catch and hide errors from the courier service — pass the status code and body through
 - Do not send image URLs as JSON fields — images must always be sent as multipart file parts
+- Do not hard-code the courier service path prefix — keep it behind `COURIER_SERVICE_URL`
