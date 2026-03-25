@@ -8,16 +8,19 @@ import com.buyology.buyology_courier.auth.dto.response.AuthResponse;
 import com.buyology.buyology_courier.auth.dto.response.CourierSignupResponse;
 import com.buyology.buyology_courier.auth.service.AdminAuditService;
 import com.buyology.buyology_courier.auth.service.AuthService;
+import com.buyology.buyology_courier.common.storage.FileStorageService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.UUID;
 
@@ -27,35 +30,54 @@ import java.util.UUID;
 @Tag(name = "Auth", description = "Courier authentication — login, token refresh, logout. Admin signup.")
 public class AuthController {
 
-    private final AuthService       authService;
-    private final AdminAuditService adminAuditService;
+    private final AuthService        authService;
+    private final AdminAuditService  adminAuditService;
+    private final FileStorageService fileStorageService;
 
     // ── Admin: create courier with credentials ─────────────────────────────────
 
     /**
-     * ROLE_COURIER_ADMIN is the least-privilege role for courier management.
-     * ROLE_ADMIN (Keycloak super-admin) is also accepted for backward compatibility,
-     * but Keycloak should be configured to grant ROLE_COURIER_ADMIN to ops staff
-     * rather than full ROLE_ADMIN.
+     * Creates courier profile, credentials, and vehicle details in one transaction.
+     *
+     * Request format: multipart/form-data
+     *   - Part "data"                — JSON-encoded CourierSignupRequest
+     *   - Part "profileImage"        — profile photo (JPEG/PNG/WebP, max 10 MB, optional)
+     *   - Part "vehicleRegistration" — vehicle registration doc photo (optional)
+     *   - Part "drivingLicenceFront" — driving licence front (required for SCOOTER/CAR)
+     *   - Part "drivingLicenceBack"  — driving licence back  (required for SCOOTER/CAR)
+     *
+     * ROLE_COURIER_ADMIN is the least-privilege role; ROLE_ADMIN is also accepted.
      */
-    @PostMapping("/admin/couriers")
+    @PostMapping(value = "/admin/couriers", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @ResponseStatus(HttpStatus.CREATED)
     @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
     @Operation(
-            summary = "Register a new courier (admin only)",
+            summary = "Register a new courier (admin only) — multipart form",
             description = "Creates the courier profile, credentials, and vehicle details in one transaction. "
-                    + "Driving licence fields are required when vehicleType is SCOOTER or CAR. "
+                    + "Driving licence images are required when vehicleType is SCOOTER or CAR. "
                     + "Requires ROLE_COURIER_ADMIN or ROLE_ADMIN."
     )
     public CourierSignupResponse signup(
-            @Valid @RequestBody CourierSignupRequest request,
+            @RequestPart("data") @Valid CourierSignupRequest request,
+            @RequestPart(value = "profileImage",        required = false) MultipartFile profileImage,
+            @RequestPart(value = "vehicleRegistration", required = false) MultipartFile vehicleRegistration,
+            @RequestPart(value = "drivingLicenceFront", required = false) MultipartFile drivingLicenceFront,
+            @RequestPart(value = "drivingLicenceBack",  required = false) MultipartFile drivingLicenceBack,
             @AuthenticationPrincipal Jwt jwt,
             HttpServletRequest httpRequest
     ) {
-        UUID adminId = UUID.fromString(jwt.getSubject());
-        CourierSignupResponse response = authService.signup(request, adminId);
+        String profileImageUrl       = storeIfPresent(profileImage,        "profile");
+        String vehicleRegistrationUrl = storeIfPresent(vehicleRegistration, "vehicle-registration");
+        String drivingLicenceFrontUrl = storeIfPresent(drivingLicenceFront, "licence");
+        String drivingLicenceBackUrl  = storeIfPresent(drivingLicenceBack,  "licence");
 
-        // Audit log written in a separate transaction after the main one commits
+        UUID adminId = UUID.fromString(jwt.getSubject());
+        CourierSignupResponse response = authService.signup(
+                request, adminId,
+                profileImageUrl, vehicleRegistrationUrl,
+                drivingLicenceFrontUrl, drivingLicenceBackUrl
+        );
+
         adminAuditService.log(
                 AdminAction.COURIER_CREATED,
                 response.courierId(),
@@ -108,7 +130,13 @@ public class AuthController {
         authService.logout(request.refreshToken());
     }
 
-    // ── Helper ─────────────────────────────────────────────────────────────────
+    // ── Helpers ────────────────────────────────────────────────────────────────
+
+    private String storeIfPresent(MultipartFile file, String subDir) {
+        return (file != null && !file.isEmpty())
+                ? fileStorageService.store(file, subDir)
+                : null;
+    }
 
     private String resolveClientIp(HttpServletRequest request) {
         String forwarded = request.getHeader("X-Forwarded-For");

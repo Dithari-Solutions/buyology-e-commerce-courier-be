@@ -13,13 +13,25 @@ import java.util.UUID;
 
 public interface CourierService {
 
-    CourierResponse create(CreateCourierRequest request);
+    /**
+     * @param profileImageUrl      public URL of the stored profile photo, or null
+     * @param drivingLicenceImageUrl public URL of the stored licence image, or null
+     */
+    CourierResponse create(CreateCourierRequest request,
+                           String profileImageUrl,
+                           String drivingLicenceImageUrl);
 
     CourierResponse findById(UUID id);
 
     Page<CourierResponse> findAll(CourierStatus status, VehicleType vehicleType, Boolean isAvailable, Pageable pageable);
 
-    CourierResponse update(UUID id, UpdateCourierRequest request);
+    /**
+     * @param profileImageUrl      new profile photo URL, or null to leave unchanged
+     * @param drivingLicenceImageUrl new licence image URL, or null to leave unchanged
+     */
+    CourierResponse update(UUID id, UpdateCourierRequest request,
+                           String profileImageUrl,
+                           String drivingLicenceImageUrl);
 
     CourierResponse updateStatus(UUID id, UpdateCourierStatusRequest request);
 

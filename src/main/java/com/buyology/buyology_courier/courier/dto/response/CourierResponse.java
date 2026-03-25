@@ -18,6 +18,7 @@ public record CourierResponse(
         boolean isAvailable,
         BigDecimal rating,
         String profileImageUrl,
+        String drivingLicenceImageUrl,
         Instant createdAt,
         Instant updatedAt
 ) {}

@@ -21,6 +21,7 @@ public final class CourierMapper {
                 courier.isAvailable(),
                 courier.getRating(),
                 courier.getProfileImageUrl(),
+                courier.getDrivingLicenceImageUrl(),
                 courier.getCreatedAt(),
                 courier.getUpdatedAt()
         );

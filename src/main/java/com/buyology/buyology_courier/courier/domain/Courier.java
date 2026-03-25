@@ -69,6 +69,10 @@ public class Courier {
     @Column(name = "profile_image_url")
     private String profileImageUrl;
 
+    // Front-face of driving licence — NULL for BICYCLE / FOOT couriers
+    @Column(name = "driving_licence_image_url")
+    private String drivingLicenceImageUrl;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;

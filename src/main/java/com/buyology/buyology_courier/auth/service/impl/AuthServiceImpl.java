@@ -68,7 +68,12 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     @Transactional
-    public CourierSignupResponse signup(CourierSignupRequest request, UUID adminId) {
+    public CourierSignupResponse signup(CourierSignupRequest request,
+                                        UUID adminId,
+                                        String profileImageUrl,
+                                        String vehicleRegistrationUrl,
+                                        String drivingLicenceFrontUrl,
+                                        String drivingLicenceBackUrl) {
         // Rate limit: prevent a compromised admin account from bulk-creating couriers
         enforceAdminSignupRateLimit(adminId);
 
@@ -93,14 +98,15 @@ public class AuthServiceImpl implements AuthService {
             }
         }
 
-        // 1. Create courier profile
+        // 1. Create courier profile — store profile photo + licence front image for quick access
         Courier courier = Courier.builder()
                 .firstName(request.firstName())
                 .lastName(request.lastName())
                 .phone(request.phone())
                 .email(request.email())
                 .vehicleType(request.vehicleType())
-                .profileImageUrl(request.profileImageUrl())
+                .profileImageUrl(profileImageUrl)
+                .drivingLicenceImageUrl(needsLicense ? drivingLicenceFrontUrl : null)
                 .status(CourierStatus.OFFLINE)
                 .isAvailable(false)
                 .build();
@@ -118,7 +124,7 @@ public class AuthServiceImpl implements AuthService {
                 .build();
         credentialsRepository.save(credentials);
 
-        // 3. Create vehicle details
+        // 3. Create vehicle details — full front + back licence URLs stored here
         CourierVehicleDetails vehicleDetails = CourierVehicleDetails.builder()
                 .courierId(courier.getId())
                 .vehicleType(request.vehicleType())
@@ -127,11 +133,11 @@ public class AuthServiceImpl implements AuthService {
                 .vehicleYear(request.vehicleYear())
                 .vehicleColor(request.vehicleColor())
                 .licensePlate(needsLicense ? request.licensePlate() : null)
-                .vehicleRegistrationUrl(request.vehicleRegistrationUrl())
+                .vehicleRegistrationUrl(vehicleRegistrationUrl)
                 .drivingLicenseNumber(needsLicense ? request.drivingLicenseNumber() : null)
                 .drivingLicenseExpiry(needsLicense ? request.drivingLicenseExpiry() : null)
-                .drivingLicenseFrontUrl(needsLicense ? request.drivingLicenseFrontUrl() : null)
-                .drivingLicenseBackUrl(needsLicense ? request.drivingLicenseBackUrl() : null)
+                .drivingLicenseFrontUrl(needsLicense ? drivingLicenceFrontUrl : null)
+                .drivingLicenseBackUrl(needsLicense ? drivingLicenceBackUrl : null)
                 .requiresDrivingLicense(needsLicense)
                 .build();
         vehicleDetailsRepository.save(vehicleDetails);

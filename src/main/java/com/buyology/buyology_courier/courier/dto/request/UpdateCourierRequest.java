@@ -4,9 +4,9 @@ import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.Size;
 import lombok.Builder;
-import org.hibernate.validator.constraints.URL;
 
-// All fields optional — only non-null fields are applied (PATCH semantics)
+// All fields optional — only non-null fields are applied (PATCH semantics).
+// Images are uploaded as multipart file parts — not as URL strings.
 @Builder
 public record UpdateCourierRequest(
 
@@ -19,9 +19,5 @@ public record UpdateCourierRequest(
         @Email @Size(max = 150)
         String email,
 
-        VehicleType vehicleType,
-
-        @URL(message = "Must be a valid HTTP/HTTPS URL")
-        @Size(max = 2048)
-        String profileImageUrl
+        VehicleType vehicleType
 ) {}

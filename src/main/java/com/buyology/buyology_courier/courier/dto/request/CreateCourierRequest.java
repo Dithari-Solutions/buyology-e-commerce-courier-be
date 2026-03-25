@@ -3,8 +3,12 @@ package com.buyology.buyology_courier.courier.dto.request;
 import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import jakarta.validation.constraints.*;
 import lombok.Builder;
-import org.hibernate.validator.constraints.URL;
 
+/**
+ * Legacy profile-only courier creation.
+ * Images are uploaded as multipart file parts — not as URL strings.
+ * See {@code POST /api/v1/couriers} in CourierController.
+ */
 @Builder
 public record CreateCourierRequest(
 
@@ -21,9 +25,5 @@ public record CreateCourierRequest(
         String email,
 
         @NotNull
-        VehicleType vehicleType,
-
-        @URL(message = "Must be a valid HTTP/HTTPS URL")
-        @Size(max = 2048)
-        String profileImageUrl
+        VehicleType vehicleType
 ) {}

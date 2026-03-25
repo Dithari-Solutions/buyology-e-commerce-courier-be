@@ -62,7 +62,9 @@ public class CourierServiceImpl implements CourierService {
 
     @Override
     @Transactional
-    public CourierResponse create(CreateCourierRequest request) {
+    public CourierResponse create(CreateCourierRequest request,
+                                  String profileImageUrl,
+                                  String drivingLicenceImageUrl) {
         if (courierRepository.existsByPhoneAndDeletedAtIsNull(request.phone())) {
             throw new DuplicatePhoneException(request.phone());
         }
@@ -73,7 +75,8 @@ public class CourierServiceImpl implements CourierService {
                 .phone(request.phone())
                 .email(request.email())
                 .vehicleType(request.vehicleType())
-                .profileImageUrl(request.profileImageUrl())
+                .profileImageUrl(profileImageUrl)
+                .drivingLicenceImageUrl(drivingLicenceImageUrl)
                 .status(CourierStatus.OFFLINE)
                 .isAvailable(false)
                 .build();
@@ -110,15 +113,18 @@ public class CourierServiceImpl implements CourierService {
 
     @Override
     @Transactional
-    public CourierResponse update(UUID id, UpdateCourierRequest request) {
+    public CourierResponse update(UUID id, UpdateCourierRequest request,
+                                  String profileImageUrl,
+                                  String drivingLicenceImageUrl) {
         // Always fetch a fresh managed entity for mutations — never use the cache.
         Courier courier = getOrThrow(id);
 
-        if (request.firstName() != null)       courier.setFirstName(request.firstName());
-        if (request.lastName() != null)        courier.setLastName(request.lastName());
-        if (request.email() != null)           courier.setEmail(request.email());
-        if (request.vehicleType() != null)     courier.setVehicleType(request.vehicleType());
-        if (request.profileImageUrl() != null) courier.setProfileImageUrl(request.profileImageUrl());
+        if (request.firstName() != null)    courier.setFirstName(request.firstName());
+        if (request.lastName() != null)     courier.setLastName(request.lastName());
+        if (request.email() != null)        courier.setEmail(request.email());
+        if (request.vehicleType() != null)  courier.setVehicleType(request.vehicleType());
+        if (profileImageUrl != null)        courier.setProfileImageUrl(profileImageUrl);
+        if (drivingLicenceImageUrl != null) courier.setDrivingLicenceImageUrl(drivingLicenceImageUrl);
 
         Courier saved = courierRepository.save(courier);
         courierLookupService.evict(id);

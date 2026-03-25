@@ -13,11 +13,20 @@ public interface AuthService {
     /**
      * Admin-only: create a courier with credentials and vehicle details in one transaction.
      *
-     * @param request    full signup payload
-     * @param adminId    UUID of the admin performing the action (from JWT sub claim)
+     * @param request                full signup payload
+     * @param adminId                UUID of the admin performing the action (from JWT sub claim)
+     * @param profileImageUrl        stored URL of the profile photo, or null
+     * @param vehicleRegistrationUrl stored URL of the vehicle registration doc, or null
+     * @param drivingLicenceFrontUrl stored URL of the licence front image, or null
+     * @param drivingLicenceBackUrl  stored URL of the licence back image, or null
      * @return summary of the created courier
      */
-    CourierSignupResponse signup(CourierSignupRequest request, UUID adminId);
+    CourierSignupResponse signup(CourierSignupRequest request,
+                                 UUID adminId,
+                                 String profileImageUrl,
+                                 String vehicleRegistrationUrl,
+                                 String drivingLicenceFrontUrl,
+                                 String drivingLicenceBackUrl);
 
     /**
      * Courier login with phone number and password.
