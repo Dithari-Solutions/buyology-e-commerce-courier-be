@@ -134,13 +134,13 @@ public class SecurityConfig {
                 return keycloakProvider::authenticate;
             }
             String iss = extractIss(token);
-            log.debug("[JWT-ROUTER] iss={} uri={}", iss, request.getRequestURI());
+            log.info("[JWT-ROUTER] iss='{}' uri={}", iss, request.getRequestURI());
             if (isCourierToken(token)) {
-                log.debug("[JWT-ROUTER] → courierDecoder");
+                log.info("[JWT-ROUTER] → courierDecoder");
                 return courierProvider::authenticate;
             }
             if (isEcommerceServiceToken(token)) {
-                log.debug("[JWT-ROUTER] → ecommerceServiceDecoder");
+                log.info("[JWT-ROUTER] → ecommerceServiceDecoder");
                 return ecommerceServiceProvider::authenticate;
             }
             log.warn("[JWT-ROUTER] iss='{}' did not match courier('{}') or ecommerce('{}') — falling back to Keycloak decoder",

@@ -15,10 +15,12 @@ import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
+import lombok.extern.slf4j.Slf4j;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
+@Slf4j
 @Configuration
 public class AuthConfig {
 
@@ -80,6 +82,10 @@ public class AuthConfig {
             @Value("${ecommerce.service.jwt.secret}") String secret,
             @Value("${ecommerce.service.jwt.issuer:buyology-ecommerce-service}") String issuer
     ) {
+        log.warn("[ECOMMERCE-DECODER] secret length={} first4='{}' issuer='{}'",
+                secret.length(),
+                secret.length() >= 4 ? secret.substring(0, 4) : secret,
+                issuer);
         SecretKeySpec key = new SecretKeySpec(
                 secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key)
