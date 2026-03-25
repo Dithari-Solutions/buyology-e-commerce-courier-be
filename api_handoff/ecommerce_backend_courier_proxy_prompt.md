@@ -638,9 +638,298 @@ environment:
 
 ## What NOT to do
 
-- Do not store or re-sign the Keycloak JWT — forward it exactly as received in the `Authorization` header
 - Do not call the courier service from the browser — this proxy is the only caller
 - Do not add `COURIER_SERVICE_URL` to any frontend config or `.env` file
 - Do not catch and hide errors from the courier service — pass the status code and body through
 - Do not send image URLs as JSON fields — images must always be sent as multipart file parts
+
+---
+
+## Service-to-service authentication — RSA-256 JWT
+
+The courier service validates every request using an RSA-256 JWT that **you generate and sign** with your private key. The courier service holds only the corresponding public key — no shared secret to sync.
+
+### How it works
+
+```
+Ecommerce Backend                       Courier Service
+─────────────────                       ───────────────
+RSA private key  ──signs JWT──────────► RSA public key (in repo)
+(GitHub secret)                         verifies signature ✓
+```
+
+### Step 1 — Generate a key pair (run once, locally)
+
+```bash
+# Private key — keep this secret (goes into your GitHub secrets)
+openssl genrsa -out courier-private.pem 2048
+
+# Public key — not sensitive (send this file to the courier team to commit)
+openssl rsa -in courier-private.pem -pubout -out courier-public.pem
+```
+
+Send `courier-public.pem` to the courier service team. They commit it as
+`src/main/resources/ecommerce-public.pem` — no secrets involved on their side.
+
+Store `courier-private.pem` content as a GitHub secret: `COURIER_SERVICE_PRIVATE_KEY`.
+
+### Step 2 — Add JJWT dependency
+
+```xml
+<!-- pom.xml -->
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-api</artifactId>
+    <version>0.12.6</version>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-impl</artifactId>
+    <version>0.12.6</version>
+    <scope>runtime</scope>
+</dependency>
+<dependency>
+    <groupId>io.jsonwebtoken</groupId>
+    <artifactId>jjwt-jackson</artifactId>
+    <version>0.12.6</version>
+    <scope>runtime</scope>
+</dependency>
+```
+
+Gradle:
+```groovy
+implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+runtimeOnly    'io.jsonwebtoken:jjwt-impl:0.12.6'
+runtimeOnly    'io.jsonwebtoken:jjwt-jackson:0.12.6'
+```
+
+### Step 3 — Add configuration property
+
+```properties
+# application.properties
+courier.service.jwt.private-key=${COURIER_SERVICE_PRIVATE_KEY}
+courier.service.jwt.issuer=${COURIER_SERVICE_JWT_ISSUER:buyology-ecommerce-service}
+courier.service.jwt.ttl-seconds=${COURIER_SERVICE_JWT_TTL:900}
+```
+
+### Step 4 — Create `CourierServiceTokenProvider`
+
+`src/main/java/.../courier/CourierServiceTokenProvider.java`
+
+```java
+@Component
+@Slf4j
+public class CourierServiceTokenProvider {
+
+    private final PrivateKey privateKey;
+
+    @Value("${courier.service.jwt.issuer:buyology-ecommerce-service}")
+    private String issuer;
+
+    @Value("${courier.service.jwt.ttl-seconds:900}")
+    private long ttlSeconds;
+
+    public CourierServiceTokenProvider(
+            @Value("${courier.service.jwt.private-key}") String privateKeyPem
+    ) throws Exception {
+        this.privateKey = parsePrivateKey(privateKeyPem);
+        log.info("[COURIER-TOKEN] RSA private key loaded successfully");
+    }
+
+    /**
+     * Generates a short-lived RS256 JWT for service-to-service calls to the courier service.
+     *
+     * @param adminId  the authenticated admin's ID (becomes the {@code sub} claim)
+     * @param roles    list of roles to include (e.g. ["COURIER_ADMIN"])
+     */
+    public String generateToken(String adminId, List<String> roles) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .issuer(issuer)
+                .subject(adminId)
+                .claim("roles", roles)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(ttlSeconds)))
+                .signWith(privateKey, Jwts.SIG.RS256)
+                .compact();
+    }
+
+    private PrivateKey parsePrivateKey(String pem) throws Exception {
+        String cleaned = pem
+                .replace("-----BEGIN PRIVATE KEY-----", "")
+                .replace("-----END PRIVATE KEY-----", "")
+                .replace("-----BEGIN RSA PRIVATE KEY-----", "")
+                .replace("-----END RSA PRIVATE KEY-----", "")
+                .replaceAll("\\s+", "");
+        byte[] keyBytes = Base64.getDecoder().decode(cleaned);
+        return KeyFactory.getInstance("RSA")
+                .generatePrivate(new PKCS8EncodedKeySpec(keyBytes));
+    }
+}
+```
+
+Required imports:
+```java
+import io.jsonwebtoken.Jwts;
+import java.security.KeyFactory;
+import java.security.PrivateKey;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.time.Instant;
+import java.util.Base64;
+import java.util.Date;
+import java.util.List;
+```
+
+### Step 5 — Use the token in `CourierServiceClient`
+
+Inject `CourierServiceTokenProvider` and generate a token per request:
+
+```java
+@Component
+@Slf4j
+public class CourierServiceClient {
+
+    private final WebClient webClient;
+    private final CourierServiceTokenProvider tokenProvider;
+
+    @Value("${courier.service.timeout-ms:10000}")
+    private long timeoutMs;
+
+    public CourierServiceClient(
+            @Value("${courier.service.url}") String baseUrl,
+            CourierServiceTokenProvider tokenProvider
+    ) {
+        this.webClient    = WebClient.builder().baseUrl(baseUrl).build();
+        this.tokenProvider = tokenProvider;
+    }
+
+    /** Builds a fresh Bearer token for the given admin. */
+    private String bearerToken(String adminId) {
+        return "Bearer " + tokenProvider.generateToken(adminId, List.of("COURIER_ADMIN"));
+    }
+
+    // ── no-body requests (GET / DELETE) ───────────────────────────────────────
+
+    public ResponseEntity<String> forwardNoBody(
+            String method, String uri, String queryString,
+            String adminId, String clientIp
+    ) {
+        String fullUri = (queryString != null && !queryString.isBlank()) ? uri + "?" + queryString : uri;
+        WebClient.RequestHeadersSpec<?> spec = switch (method.toUpperCase()) {
+            case "GET"    -> webClient.get().uri(fullUri);
+            case "DELETE" -> webClient.delete().uri(fullUri);
+            default       -> throw new IllegalArgumentException("Unsupported method: " + method);
+        };
+        return execute(spec
+                .header(HttpHeaders.AUTHORIZATION, bearerToken(adminId))
+                .header("X-Forwarded-For", clientIp));
+    }
+
+    // ── JSON body requests (PATCH status / availability) ──────────────────────
+
+    public ResponseEntity<String> forwardJson(
+            String method, String uri, Object body,
+            String adminId, String clientIp
+    ) {
+        WebClient.RequestBodySpec spec = switch (method.toUpperCase()) {
+            case "POST"  -> webClient.post().uri(uri);
+            case "PATCH" -> webClient.patch().uri(uri);
+            default      -> throw new IllegalArgumentException("Unsupported method: " + method);
+        };
+        return execute(spec
+                .header(HttpHeaders.AUTHORIZATION, bearerToken(adminId))
+                .header("X-Forwarded-For", clientIp)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body));
+    }
+
+    // ── multipart requests (create / update courier) ──────────────────────────
+
+    public ResponseEntity<String> forwardMultipart(
+            String uri, MultiValueMap<String, HttpEntity<?>> body,
+            String adminId, String clientIp
+    ) {
+        return execute(webClient.post().uri(uri)
+                .header(HttpHeaders.AUTHORIZATION, bearerToken(adminId))
+                .header("X-Forwarded-For", clientIp)
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .bodyValue(body));
+    }
+
+    public ResponseEntity<String> forwardMultipartPatch(
+            String uri, MultiValueMap<String, HttpEntity<?>> body,
+            String adminId, String clientIp
+    ) {
+        return execute(webClient.patch().uri(uri)
+                .header(HttpHeaders.AUTHORIZATION, bearerToken(adminId))
+                .header("X-Forwarded-For", clientIp)
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .bodyValue(body));
+    }
+
+    // ── shared execute ────────────────────────────────────────────────────────
+
+    private ResponseEntity<String> execute(WebClient.RequestHeadersSpec<?> spec) {
+        try {
+            return spec.retrieve()
+                    .onStatus(s -> s.is4xxClientError() || s.is5xxServerError(),
+                            r -> r.bodyToMono(String.class)
+                                    .map(b -> new CourierServiceException(r.statusCode().value(), b)))
+                    .toEntity(String.class)
+                    .timeout(Duration.ofMillis(timeoutMs))
+                    .block();
+        } catch (CourierServiceException ex) {
+            log.warn("[COURIER-CLIENT] → {} body={}", ex.getStatusCode(), ex.getBody());
+            return ResponseEntity.status(ex.getStatusCode()).body(ex.getBody());
+        } catch (Exception ex) {
+            log.error("Courier service call failed: {}", ex.getMessage(), ex);
+            return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+                    .body("{\"status\":502,\"error\":\"Bad Gateway\"," +
+                          "\"message\":\"Courier service is temporarily unavailable.\"}");
+        }
+    }
+}
+```
+
+### Step 6 — Update `AdminCourierController` to pass `adminId`
+
+Extract the admin's ID from their session/security context and pass it to the client:
+
+```java
+// In each controller method, get the admin ID from the security context:
+String adminId = SecurityContextHolder.getContext()
+        .getAuthentication().getName();  // returns the principal name / user ID
+
+// Then call the client:
+courierServiceClient.forwardNoBody("GET", "/api/v1/couriers", queryString, adminId, clientIp);
+```
+
+### Step 7 — Add environment variable to deployment
+
+```yaml
+# docker-compose.yml or GitHub Actions secret
+COURIER_SERVICE_PRIVATE_KEY: |
+  -----BEGIN PRIVATE KEY-----
+  MIIEvQ...
+  -----END PRIVATE KEY-----
+```
+
+As a GitHub secret: set `COURIER_SERVICE_PRIVATE_KEY` to the full content of `courier-private.pem` (including the `-----BEGIN/END-----` lines).
+
+### JWT claims the courier service expects
+
+| Claim | Type | Required | Description |
+|---|---|---|---|
+| `iss` | string | yes | Must be `buyology-ecommerce-service` |
+| `sub` | string | yes | Admin user ID |
+| `roles` | string[] | yes | Must include `COURIER_ADMIN` |
+| `iat` | number | yes | Issued-at timestamp |
+| `exp` | number | yes | Expiry timestamp (recommend 15 min) |
+
+### Key rotation
+
+1. Generate a new key pair with `openssl genrsa`
+2. Send the new public key to the courier team — they commit `ecommerce-public.pem` and deploy
+3. Update `COURIER_SERVICE_PRIVATE_KEY` in your GitHub secrets and redeploy
+4. No coordination on secret values needed — only the public key file needs updating
 - Do not hard-code the courier service path prefix — keep it behind `COURIER_SERVICE_URL`

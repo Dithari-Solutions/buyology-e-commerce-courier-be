@@ -194,7 +194,6 @@ jobs:
             JWT_ISSUER_URI=${{ secrets.JWT_ISSUER_URI }}
             AUTH_JWT_SECRET=${{ secrets.AUTH_JWT_SECRET }}
             AUTH_ADMIN_JWT_AUDIENCE=${{ secrets.AUTH_ADMIN_JWT_AUDIENCE }}
-            ECOMMERCE_SERVICE_JWT_SECRET=${{ secrets.ECOMMERCE_SERVICE_JWT_SECRET }}
             CORS_ALLOWED_ORIGINS=${{ secrets.CORS_ALLOWED_ORIGINS }}
             ENVEOF
             mv .env.tmp .env

@@ -1,6 +1,7 @@
 package com.buyology.buyology_courier.config;
 
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -16,14 +17,18 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.util.HexFormat;
+import java.security.KeyFactory;
+import java.security.interfaces.RSAPublicKey;
+import java.security.spec.X509EncodedKeySpec;
+import java.util.Base64;
 import java.util.List;
 
 @Slf4j
 @Configuration
+@EnableConfigurationProperties(EcommerceJwtProperties.class)
 public class AuthConfig {
 
     /**
@@ -75,32 +80,34 @@ public class AuthConfig {
      *   "buyology-courier-service" to the access token audience.
      */
     /**
-     * JWT decoder for ecommerce-backend service-to-service tokens (HMAC-SHA256).
-     * The ecommerce backend generates a short-lived token per request signed with
-     * the shared secret configured via ECOMMERCE_SERVICE_JWT_SECRET.
+     * JWT decoder for ecommerce-backend service-to-service tokens (RSA-256).
+     * The ecommerce backend signs tokens with its private key.
+     * The courier service verifies them with the corresponding public key stored in
+     * src/main/resources/ecommerce-public.pem — committed to the repo since public keys
+     * are not sensitive. No shared secret to manage or rotate on both sides.
      */
     @Bean("ecommerceServiceJwtDecoder")
     NimbusJwtDecoder ecommerceServiceJwtDecoder(
-            @Value("${ecommerce.service.jwt.secret}") String secret,
+            @Value("${ecommerce.service.jwt.public-key-location:classpath:ecommerce-public.pem}") Resource publicKeyResource,
             @Value("${ecommerce.service.jwt.issuer:buyology-ecommerce-service}") String issuer
-    ) {
-        try {
-            byte[] sha256 = MessageDigest.getInstance("SHA-256")
-                    .digest(secret.getBytes(StandardCharsets.UTF_8));
-            String fingerprint = HexFormat.of().formatHex(sha256).substring(0, 16);
-            log.warn("[ECOMMERCE-DECODER] secret length={} sha256prefix='{}' issuer='{}'",
-                    secret.length(), fingerprint, issuer);
-        } catch (Exception e) {
-            log.warn("[ECOMMERCE-DECODER] secret length={} issuer='{}' (fingerprint failed: {})",
-                    secret.length(), issuer, e.getMessage());
-        }
-        SecretKeySpec key = new SecretKeySpec(
-                secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
-        NimbusJwtDecoder decoder = NimbusJwtDecoder.withSecretKey(key)
-                .macAlgorithm(MacAlgorithm.HS256)
-                .build();
+    ) throws Exception {
+        String pem = new String(publicKeyResource.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        RSAPublicKey publicKey = parseRsaPublicKey(pem);
+        log.info("[ECOMMERCE-DECODER] loaded RSA public key modulus={}bits issuer='{}'",
+                publicKey.getModulus().bitLength(), issuer);
+        NimbusJwtDecoder decoder = NimbusJwtDecoder.withPublicKey(publicKey).build();
         decoder.setJwtValidator(JwtValidators.createDefaultWithIssuer(issuer));
         return decoder;
+    }
+
+    private RSAPublicKey parseRsaPublicKey(String pem) throws Exception {
+        String cleaned = pem
+                .replace("-----BEGIN PUBLIC KEY-----", "")
+                .replace("-----END PUBLIC KEY-----", "")
+                .replaceAll("\\s+", "");
+        byte[] keyBytes = Base64.getDecoder().decode(cleaned);
+        return (RSAPublicKey) KeyFactory.getInstance("RSA")
+                .generatePublic(new X509EncodedKeySpec(keyBytes));
     }
 
     @Bean("keycloakJwtDecoder")
