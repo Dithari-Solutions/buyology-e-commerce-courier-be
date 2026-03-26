@@ -167,14 +167,33 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public AuthResponse login(CourierLoginRequest request, String deviceInfo, String ipAddress) {
-        CourierCredentials credentials = credentialsRepository
-                .findByPhoneNumber(request.phoneNumber())
-                // Generic message — never reveal whether the phone exists
-                .orElseThrow(InvalidCredentialsException::new);
+        log.info("Login attempt: phone={}", request.phoneNumber());
 
-        checkAccountAccessible(credentials);
+        CourierCredentials credentials;
+        try {
+            credentials = credentialsRepository
+                    .findByPhoneNumber(request.phoneNumber())
+                    // Generic message — never reveal whether the phone exists
+                    .orElseThrow(InvalidCredentialsException::new);
+            log.info("Credentials found: courierId={}, accountStatus={}", credentials.getCourierId(), credentials.getAccountStatus());
+        } catch (InvalidCredentialsException ex) {
+            log.info("Login failed — phone not found: phone={}", request.phoneNumber());
+            throw ex;
+        } catch (Exception ex) {
+            log.error("Login failed — DB error looking up credentials: phone={}", request.phoneNumber(), ex);
+            throw ex;
+        }
+
+        try {
+            checkAccountAccessible(credentials);
+            log.info("Account accessible: courierId={}", credentials.getCourierId());
+        } catch (Exception ex) {
+            log.info("Login blocked — account not accessible: courierId={}, reason={}", credentials.getCourierId(), ex.getMessage());
+            throw ex;
+        }
 
         if (!passwordEncoder.matches(request.password(), credentials.getPasswordHash())) {
+            log.info("Login failed — wrong password: courierId={}", credentials.getCourierId());
             recordFailedAttempt(credentials);
             throw new InvalidCredentialsException();
         }
@@ -183,8 +202,14 @@ public class AuthServiceImpl implements AuthService {
         credentials.setFailedLoginAttempts(0);
         credentials.setLockedUntil(null);
         credentials.setLastLoginAt(Instant.now());
-        credentialsRepository.save(credentials);
+        try {
+            credentialsRepository.save(credentials);
+        } catch (Exception ex) {
+            log.error("Login failed — DB error saving credential state: courierId={}", credentials.getCourierId(), ex);
+            throw ex;
+        }
 
+        log.info("Password verified, issuing token pair: courierId={}", credentials.getCourierId());
         return issueTokenPair(credentials.getCourierId(), deviceInfo, ipAddress);
     }
 
@@ -276,18 +301,33 @@ public class AuthServiceImpl implements AuthService {
 
     /** Generate access JWT + refresh token, persist the refresh token hash, return the pair. */
     private AuthResponse issueTokenPair(UUID courierId, String deviceInfo, String ipAddress) {
-        String accessToken  = jwtService.generateAccessToken(courierId);
-        String rawRefresh   = jwtService.generateRawRefreshToken();
-        String refreshHash  = jwtService.hashToken(rawRefresh);
+        String accessToken;
+        String rawRefresh;
+        String refreshHash;
+        try {
+            accessToken = jwtService.generateAccessToken(courierId);
+            rawRefresh  = jwtService.generateRawRefreshToken();
+            refreshHash = jwtService.hashToken(rawRefresh);
+            log.info("JWT generated: courierId={}", courierId);
+        } catch (Exception ex) {
+            log.error("Failed to generate JWT: courierId={}", courierId, ex);
+            throw ex;
+        }
 
-        CourierRefreshToken token = CourierRefreshToken.builder()
-                .courierId(courierId)
-                .tokenHash(refreshHash)
-                .expiresAt(jwtService.refreshTokenExpiresAt())
-                .deviceInfo(deviceInfo)
-                .ipAddress(ipAddress)
-                .build();
-        refreshTokenRepository.save(token);
+        try {
+            CourierRefreshToken token = CourierRefreshToken.builder()
+                    .courierId(courierId)
+                    .tokenHash(refreshHash)
+                    .expiresAt(jwtService.refreshTokenExpiresAt())
+                    .deviceInfo(deviceInfo)
+                    .ipAddress(ipAddress)
+                    .build();
+            refreshTokenRepository.save(token);
+            log.info("Refresh token persisted: courierId={}", courierId);
+        } catch (Exception ex) {
+            log.error("Failed to persist refresh token: courierId={}", courierId, ex);
+            throw ex;
+        }
 
         return new AuthResponse(accessToken, rawRefresh, accessTokenExpirySeconds, courierId);
     }
