@@ -307,6 +307,7 @@ public class CourierServiceImpl implements CourierService {
         try {
             String payload = objectMapper.writeValueAsString(event);
             outboxEventRepository.save(OutboxEvent.builder()
+                    .exchange(RabbitMQConfig.COURIER_EXCHANGE)
                     .routingKey(routingKey)
                     .payload(payload)
                     .eventVersion(1)

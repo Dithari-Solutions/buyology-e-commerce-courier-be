@@ -24,6 +24,9 @@ public class OutboxEvent {
     @Column(updatable = false, nullable = false)
     private UUID id;
 
+    @Column(name = "exchange", nullable = false, length = 150)
+    private String exchange;
+
     @Column(name = "routing_key", nullable = false, length = 100)
     private String routingKey;
 

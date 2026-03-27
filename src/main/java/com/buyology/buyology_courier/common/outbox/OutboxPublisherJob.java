@@ -1,6 +1,5 @@
 package com.buyology.buyology_courier.common.outbox;
 
-import com.buyology.buyology_courier.courier.messaging.config.RabbitMQConfig;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.amqp.core.Message;
@@ -54,7 +53,7 @@ public class OutboxPublisherJob {
                         .setHeader("eventVersion", event.getEventVersion())
                         .build();
 
-                rabbitTemplate.send(RabbitMQConfig.COURIER_EXCHANGE, event.getRoutingKey(), message);
+                rabbitTemplate.send(event.getExchange(), event.getRoutingKey(), message);
 
                 event.setStatus(OutboxStatus.PUBLISHED);
                 event.setPublishedAt(Instant.now());

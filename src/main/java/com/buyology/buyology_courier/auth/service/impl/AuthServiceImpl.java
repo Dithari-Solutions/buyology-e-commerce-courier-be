@@ -354,6 +354,7 @@ public class AuthServiceImpl implements AuthService {
     private void saveOutboxEvent(String routingKey, Object event) {
         try {
             outboxEventRepository.save(OutboxEvent.builder()
+                    .exchange(RabbitMQConfig.COURIER_EXCHANGE)
                     .routingKey(routingKey)
                     .payload(objectMapper.writeValueAsString(event))
                     .eventVersion(1)
