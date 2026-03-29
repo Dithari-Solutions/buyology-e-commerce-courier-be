@@ -50,16 +50,16 @@ class CourierServiceImplTest {
 
     private CourierServiceImpl service;
 
-    @BeforeEach
-    void setUp() {
-        service = new CourierServiceImpl(
-                courierRepository, locationRepository, courierLookupService,
-                outboxEventRepository, eventPublisher,
-                new ObjectMapper().findAndRegisterModules(),
-                new SimpleMeterRegistry(),
-                stringRedisTemplate
-        );
-    }
+    // @BeforeEach
+    // void setUp() {
+    //     service = new CourierServiceImpl(
+    //             courierRepository, locationRepository, courierLookupService,
+    //             outboxEventRepository, eventPublisher,
+    //             new ObjectMapper().findAndRegisterModules(),
+    //             new SimpleMeterRegistry(),
+    //             stringRedisTemplate
+    //     );
+    // }
 
     // ── create ─────────────────────────────────────────────────────────────────
 

@@ -21,6 +21,7 @@ import com.buyology.buyology_courier.courier.messaging.event.*;
 import com.buyology.buyology_courier.courier.repository.CourierLocationRepository;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.repository.spec.CourierSpecification;
+import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.courier.service.CourierLookupService;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -51,6 +52,7 @@ public class CourierServiceImpl implements CourierService {
     private final CourierRepository         courierRepository;
     private final CourierLocationRepository locationRepository;
     private final CourierLookupService      courierLookupService;
+    private final CourierGeoService         courierGeoService;
     private final OutboxEventRepository     outboxEventRepository;
     // Still used for high-frequency location events (fire-and-forget is acceptable)
     private final ApplicationEventPublisher eventPublisher;
@@ -147,6 +149,11 @@ public class CourierServiceImpl implements CourierService {
         log.info("Courier status updated: {} -> {}", previousStatus, request.status());
         courierLookupService.evict(id);
 
+        // Remove from GEO index when no longer active — assignment candidates must be ACTIVE
+        if (request.status() != CourierStatus.ACTIVE) {
+            courierGeoService.remove(id);
+        }
+
         saveOutboxEvent(
                 RabbitMQConfig.COURIER_STATUS_CHANGED_KEY,
                 CourierStatusChangedEvent.of(id, previousStatus, request.status())
@@ -169,6 +176,11 @@ public class CourierServiceImpl implements CourierService {
         Courier saved = courierRepository.save(courier);
         courierLookupService.evict(id);
 
+        // Remove from GEO index when courier marks themselves unavailable
+        if (!request.available()) {
+            courierGeoService.remove(id);
+        }
+
         saveOutboxEvent(
                 RabbitMQConfig.COURIER_AVAILABILITY_CHANGED_KEY,
                 CourierAvailabilityChangedEvent.of(id, request.available())
@@ -189,6 +201,7 @@ public class CourierServiceImpl implements CourierService {
         courierRepository.save(courier);
 
         courierLookupService.evict(id);
+        courierGeoService.remove(id);
 
         saveOutboxEvent(
                 RabbitMQConfig.COURIER_DELETED_KEY,
@@ -231,6 +244,10 @@ public class CourierServiceImpl implements CourierService {
                 .build();
 
         CourierLocation saved = locationRepository.save(location);
+
+        // Update GEO index so the assignment service can find this courier in GEORADIUS queries
+        courierGeoService.addOrUpdate(courierId,
+                saved.getLatitude().doubleValue(), saved.getLongitude().doubleValue());
 
         // Location events are high-frequency — fire-and-forget is acceptable
         // (a missed ping is not a critical business event unlike registration/deletion).

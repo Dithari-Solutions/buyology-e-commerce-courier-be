@@ -30,9 +30,15 @@ public class DeliveryRabbitMQConfig {
     public static final String ORDER_DELIVERY_REQUESTED_KEY = "order.delivery.requested";
 
     // ── Outbound routing keys (courier → ecommerce / other consumers) ────────
-    public static final String DELIVERY_STATUS_CHANGED_KEY = "delivery.status.changed";
-    public static final String DELIVERY_COMPLETED_KEY      = "delivery.completed";
-    public static final String DELIVERY_CANCELLED_KEY      = "delivery.cancelled";
+    public static final String DELIVERY_STATUS_CHANGED_KEY  = "delivery.status.changed";
+    public static final String DELIVERY_COMPLETED_KEY       = "delivery.completed";
+    public static final String DELIVERY_CANCELLED_KEY       = "delivery.cancelled";
+
+    // ── Assignment routing keys ───────────────────────────────────────────────
+    public static final String COURIER_ASSIGNED_KEY         = "delivery.courier.assigned";
+    public static final String ASSIGNMENT_ACCEPTED_KEY      = "delivery.courier.assignment.accepted";
+    public static final String ASSIGNMENT_REJECTED_KEY      = "delivery.courier.assignment.rejected";
+    public static final String ASSIGNMENT_EXHAUSTED_KEY     = "delivery.assignment.exhausted";
 
     // ── Queue names ───────────────────────────────────────────────────────────
     public static final String DELIVERY_ORDER_RECEIVED_QUEUE = "delivery.order.received.queue";

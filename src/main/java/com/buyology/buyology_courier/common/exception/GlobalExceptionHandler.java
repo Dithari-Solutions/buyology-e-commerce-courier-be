@@ -1,5 +1,8 @@
 package com.buyology.buyology_courier.common.exception;
 
+import com.buyology.buyology_courier.assignment.exception.AssignmentAlreadyRespondedException;
+import com.buyology.buyology_courier.assignment.exception.AssignmentNotFoundException;
+import com.buyology.buyology_courier.assignment.exception.NoCourierAvailableException;
 import com.buyology.buyology_courier.auth.exception.AccountLockedException;
 import com.buyology.buyology_courier.auth.exception.AccountNotActiveException;
 import com.buyology.buyology_courier.auth.exception.AccountSuspendedException;
@@ -45,6 +48,29 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleLocationNotFound(
             CourierLocationNotFoundException ex, HttpServletRequest req) {
         return response(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(AssignmentNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleAssignmentNotFound(
+            AssignmentNotFoundException ex, HttpServletRequest req) {
+        return response(HttpStatus.NOT_FOUND, "Not Found", ex.getMessage(), req);
+    }
+
+    // ── 409 Assignment already responded ──────────────────────────────────────
+
+    @ExceptionHandler(AssignmentAlreadyRespondedException.class)
+    public ResponseEntity<ErrorResponse> handleAssignmentAlreadyResponded(
+            AssignmentAlreadyRespondedException ex, HttpServletRequest req) {
+        return response(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), req);
+    }
+
+    // ── 422 No courier available ──────────────────────────────────────────────
+
+    @ExceptionHandler(NoCourierAvailableException.class)
+    public ResponseEntity<ErrorResponse> handleNoCourierAvailable(
+            NoCourierAvailableException ex, HttpServletRequest req) {
+        return ResponseEntity.status(422)
+                .body(ErrorResponse.of(422, "Unprocessable Entity", ex.getMessage(), req.getRequestURI()));
     }
 
     // ── 401 Auth-specific ─────────────────────────────────────────────────────

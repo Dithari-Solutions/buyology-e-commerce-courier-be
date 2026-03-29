@@ -15,12 +15,14 @@ import com.buyology.buyology_courier.delivery.messaging.event.DeliveryOrderRecei
 import com.buyology.buyology_courier.delivery.messaging.event.DeliveryStatusChangedEvent;
 import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
 import com.buyology.buyology_courier.delivery.repository.DeliveryStatusHistoryRepository;
+import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.delivery.service.DeliveryService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -42,6 +44,7 @@ public class DeliveryServiceImpl implements DeliveryService {
     private final DeliveryOrderRepository         deliveryOrderRepository;
     private final DeliveryStatusHistoryRepository statusHistoryRepository;
     private final OutboxEventRepository           outboxEventRepository;
+    private final ApplicationEventPublisher       eventPublisher;
     private final ObjectMapper                    objectMapper;
 
     // ── Ingest ────────────────────────────────────────────────────────────────
@@ -80,6 +83,9 @@ public class DeliveryServiceImpl implements DeliveryService {
 
         appendHistory(order, DeliveryStatus.CREATED, null, null, "SYSTEM", null);
         publishStatusEvent(order, "SYSTEM");
+
+        // Trigger async nearest-courier assignment AFTER this transaction commits
+        eventPublisher.publishEvent(new DeliveryCreatedApplicationEvent(order.getId()));
 
         log.info("[Delivery] Ingested deliveryId={} for ecommerceOrderId={}",
                 order.getId(), order.getEcommerceOrderId());
