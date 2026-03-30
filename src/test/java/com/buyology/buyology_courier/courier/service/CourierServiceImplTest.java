@@ -1,5 +1,6 @@
 package com.buyology.buyology_courier.courier.service;
 
+import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.common.outbox.OutboxEvent;
 import com.buyology.buyology_courier.common.outbox.OutboxEventRepository;
 import com.buyology.buyology_courier.common.outbox.OutboxStatus;
@@ -10,12 +11,17 @@ import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.*;
 import com.buyology.buyology_courier.courier.dto.response.CourierLocationResponse;
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
-import com.buyology.buyology_courier.courier.exception.*;
+import com.buyology.buyology_courier.courier.exception.CourierLocationNotFoundException;
+import com.buyology.buyology_courier.courier.exception.CourierNotActiveException;
+import com.buyology.buyology_courier.courier.exception.CourierNotFoundException;
+import com.buyology.buyology_courier.courier.exception.DuplicatePhoneException;
+import com.buyology.buyology_courier.courier.exception.RateLimitExceededException;
 import com.buyology.buyology_courier.courier.messaging.config.RabbitMQConfig;
 import com.buyology.buyology_courier.courier.repository.CourierLocationRepository;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.service.impl.CourierServiceImpl;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
@@ -27,6 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
+import org.springframework.data.domain.Page;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -40,32 +47,39 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class CourierServiceImplTest {
 
-    @Mock CourierRepository           courierRepository;
-    @Mock CourierLocationRepository   locationRepository;
-    @Mock CourierLookupService        courierLookupService;
-    @Mock OutboxEventRepository       outboxEventRepository;
-    @Mock ApplicationEventPublisher   eventPublisher;
-    @Mock StringRedisTemplate         stringRedisTemplate;
+    @Mock CourierRepository courierRepository;
+    @Mock CourierLocationRepository locationRepository;
+    @Mock CourierLookupService courierLookupService;
+    @Mock CourierGeoService courierGeoService;
+    @Mock OutboxEventRepository outboxEventRepository;
+    @Mock ApplicationEventPublisher eventPublisher;
+    @Mock StringRedisTemplate stringRedisTemplate;
     @Mock ValueOperations<String, String> valueOps;
 
+    private MeterRegistry meterRegistry;
     private CourierServiceImpl service;
 
-    // @BeforeEach
-    // void setUp() {
-    //     service = new CourierServiceImpl(
-    //             courierRepository, locationRepository, courierLookupService,
-    //             outboxEventRepository, eventPublisher,
-    //             new ObjectMapper().findAndRegisterModules(),
-    //             new SimpleMeterRegistry(),
-    //             stringRedisTemplate
-    //     );
-    // }
+    @BeforeEach
+    void setUp() {
+        meterRegistry = new SimpleMeterRegistry();
+        service = new CourierServiceImpl(
+                courierRepository,
+                locationRepository,
+                courierLookupService,
+                courierGeoService,
+                outboxEventRepository,
+                eventPublisher,
+                new ObjectMapper().findAndRegisterModules(),
+                meterRegistry,
+                stringRedisTemplate
+        );
 
-    // ── create ─────────────────────────────────────────────────────────────────
+        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
+        when(valueOps.increment(anyString())).thenReturn(1L);
+    }
 
     @Nested
     class Create {
-
         @Test
         void succeeds_and_saves_outbox_event() {
             var request = CreateCourierRequest.builder()
@@ -105,11 +119,8 @@ class CourierServiceImplTest {
         }
     }
 
-    // ── updateStatus ───────────────────────────────────────────────────────────
-
     @Nested
     class UpdateStatus {
-
         @Test
         void saves_outbox_event_with_status_changed_routing_key() {
             var courier = courierFixture();
@@ -144,11 +155,8 @@ class CourierServiceImplTest {
         }
     }
 
-    // ── updateAvailability ─────────────────────────────────────────────────────
-
     @Nested
     class UpdateAvailability {
-
         @Test
         void throws_when_setting_available_on_non_active_courier() {
             var courier = courierFixture();
@@ -164,11 +172,8 @@ class CourierServiceImplTest {
         }
     }
 
-    // ── delete ─────────────────────────────────────────────────────────────────
-
     @Nested
     class Delete {
-
         @Test
         void soft_deletes_and_evicts_cache() {
             var courier = courierFixture();
@@ -182,6 +187,7 @@ class CourierServiceImplTest {
             assertThat(courier.getDeletedAt()).isNotNull();
             assertThat(courier.isAvailable()).isFalse();
             verify(courierLookupService).evict(courier.getId());
+            verify(courierGeoService).remove(courier.getId());
 
             ArgumentCaptor<OutboxEvent> cap = ArgumentCaptor.forClass(OutboxEvent.class);
             verify(outboxEventRepository).save(cap.capture());
@@ -189,11 +195,8 @@ class CourierServiceImplTest {
         }
     }
 
-    // ── recordLocation ─────────────────────────────────────────────────────────
-
     @Nested
     class RecordLocation {
-
         @BeforeEach
         void stubRedis() {
             when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
@@ -203,9 +206,7 @@ class CourierServiceImplTest {
         @Test
         void throws_CourierNotFoundException_when_courier_deleted_between_cache_and_save() {
             UUID id = UUID.randomUUID();
-            // Cache says active (requireActive returns boolean, not void)
             when(courierLookupService.requireActive(id)).thenReturn(true);
-            // But DB check within the transaction finds it deleted
             when(courierRepository.existsByIdAndDeletedAtIsNull(id)).thenReturn(false);
 
             assertThatThrownBy(() ->
@@ -219,7 +220,7 @@ class CourierServiceImplTest {
         @Test
         void throws_RateLimitExceededException_when_limit_exceeded() {
             UUID id = UUID.randomUUID();
-            when(valueOps.increment(anyString())).thenReturn(61L); // over limit of 60
+            when(valueOps.increment(anyString())).thenReturn(61L);
 
             assertThatThrownBy(() -> service.recordLocation(id, locationRequest()))
                     .isInstanceOf(RateLimitExceededException.class);
@@ -237,8 +238,8 @@ class CourierServiceImplTest {
             CourierLocationResponse result = service.recordLocation(courier.getId(), locationRequest());
 
             assertThat(result.courierId()).isEqualTo(courier.getId());
-            // publishEvent(Object) overload — use any(Object.class) to target the correct overload
             verify(eventPublisher).publishEvent(any(Object.class));
+            verify(courierGeoService).addOrUpdate(eq(courier.getId()), anyDouble(), anyDouble());
         }
 
         private RecordLocationRequest locationRequest() {
@@ -249,14 +250,10 @@ class CourierServiceImplTest {
         }
     }
 
-    // ── getLocationHistory ─────────────────────────────────────────────────────
-
     @Nested
     class GetLocationHistory {
-
         @Test
         void throws_when_from_is_after_to() {
-            // Validation fires before any repo call — no stub needed
             UUID id = UUID.randomUUID();
             Instant now = Instant.now();
             assertThatThrownBy(() ->
@@ -267,18 +264,15 @@ class CourierServiceImplTest {
 
         @Test
         void throws_when_range_exceeds_7_days() {
-            // Validation fires before any repo call — no stub needed
             UUID id = UUID.randomUUID();
             Instant from = Instant.now().minusSeconds(8 * 24 * 3600);
-            Instant to   = Instant.now();
+            Instant to = Instant.now();
             assertThatThrownBy(() ->
                     service.getLocationHistory(id, from, to, null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("7 days");
         }
     }
-
-    // ── helpers ────────────────────────────────────────────────────────────────
 
     private Courier courierFixture() {
         return Courier.builder()
