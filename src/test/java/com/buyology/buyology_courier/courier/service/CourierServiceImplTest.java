@@ -74,8 +74,6 @@ class CourierServiceImplTest {
                 stringRedisTemplate
         );
 
-        when(stringRedisTemplate.opsForValue()).thenReturn(valueOps);
-        when(valueOps.increment(anyString())).thenReturn(1L);
     }
 
     @Nested
