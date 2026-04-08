@@ -52,6 +52,24 @@ public class DeliveryServiceImpl implements DeliveryService {
     @Override
     @Transactional
     public DeliveryOrderResponse ingest(DeliveryOrderReceivedEvent event) {
+        log.info("[Delivery] ingest start — ecommerceOrderId={} storeId={} priority={} packageSize={} " +
+                        "pickupLat={} pickupLng={} dropoffLat={} dropoffLng={} deliveryFee={}",
+                event.ecommerceOrderId(), event.ecommerceStoreId(), event.priority(), event.packageSize(),
+                event.pickupLat(), event.pickupLng(), event.dropoffLat(), event.dropoffLng(), event.deliveryFee());
+
+        // Null-field guard — log exactly which required fields are missing
+        boolean hasNulls = false;
+        if (event.ecommerceOrderId() == null)  { log.error("[Delivery] MISSING ecommerceOrderId"); hasNulls = true; }
+        if (event.ecommerceStoreId() == null)  { log.error("[Delivery] MISSING ecommerceStoreId"); hasNulls = true; }
+        if (event.pickupLat() == null)         { log.error("[Delivery] MISSING pickupLat"); hasNulls = true; }
+        if (event.pickupLng() == null)         { log.error("[Delivery] MISSING pickupLng"); hasNulls = true; }
+        if (event.dropoffLat() == null)        { log.error("[Delivery] MISSING dropoffLat"); hasNulls = true; }
+        if (event.dropoffLng() == null)        { log.error("[Delivery] MISSING dropoffLng"); hasNulls = true; }
+        if (event.priority() == null)          { log.error("[Delivery] MISSING priority"); hasNulls = true; }
+        if (hasNulls) {
+            throw new IllegalArgumentException("DeliveryOrderReceivedEvent is missing required fields — see logs above");
+        }
+
         // Idempotency guard — ecommerce may re-publish on retry
         if (deliveryOrderRepository.existsByEcommerceOrderId(event.ecommerceOrderId())) {
             log.info("[Delivery] Duplicate ingest skipped for ecommerceOrderId={}",
@@ -61,6 +79,7 @@ public class DeliveryServiceImpl implements DeliveryService {
                     .orElseThrow());
         }
 
+        log.info("[Delivery] Building DeliveryOrder entity...");
         DeliveryOrder order = DeliveryOrder.builder()
                 .ecommerceOrderId(event.ecommerceOrderId())
                 .ecommerceStoreId(event.ecommerceStoreId())
@@ -79,7 +98,15 @@ public class DeliveryServiceImpl implements DeliveryService {
                 .status(DeliveryStatus.CREATED)
                 .build();
 
-        order = deliveryOrderRepository.save(order);
+        log.info("[Delivery] Saving DeliveryOrder to DB...");
+        try {
+            order = deliveryOrderRepository.save(order);
+            log.info("[Delivery] Saved DeliveryOrder id={} for ecommerceOrderId={}", order.getId(), order.getEcommerceOrderId());
+        } catch (Exception e) {
+            log.error("[Delivery] DB save failed for ecommerceOrderId={} — {}: {}",
+                    event.ecommerceOrderId(), e.getClass().getSimpleName(), e.getMessage(), e);
+            throw e;
+        }
 
         appendHistory(order, DeliveryStatus.CREATED, null, null, "SYSTEM", null);
         publishStatusEvent(order, "SYSTEM");

@@ -31,8 +31,18 @@ public class DeliveryOrderConsumer {
 
     @RabbitListener(queues = DeliveryRabbitMQConfig.DELIVERY_ORDER_RECEIVED_QUEUE)
     public void onDeliveryOrderReceived(DeliveryOrderReceivedEvent event) {
-        log.info("[DeliveryConsumer] Received order ecommerceOrderId={} storeId={} priority={}",
-                event.ecommerceOrderId(), event.ecommerceStoreId(), event.priority());
-        deliveryService.ingest(event);
+        log.info("[DeliveryConsumer] Received message from queue — ecommerceOrderId={} storeId={} priority={} " +
+                        "pickupLat={} pickupLng={} dropoffLat={} dropoffLng={} packageSize={} deliveryFee={}",
+                event.ecommerceOrderId(), event.ecommerceStoreId(), event.priority(),
+                event.pickupLat(), event.pickupLng(), event.dropoffLat(), event.dropoffLng(),
+                event.packageSize(), event.deliveryFee());
+        try {
+            deliveryService.ingest(event);
+            log.info("[DeliveryConsumer] Successfully ingested order ecommerceOrderId={}", event.ecommerceOrderId());
+        } catch (Exception e) {
+            log.error("[DeliveryConsumer] Failed to ingest order ecommerceOrderId={} — {}: {}",
+                    event.ecommerceOrderId(), e.getClass().getSimpleName(), e.getMessage(), e);
+            throw e; // re-throw so Spring AMQP nacks and routes to DLQ
+        }
     }
 }
