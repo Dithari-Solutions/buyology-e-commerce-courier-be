@@ -11,9 +11,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Profile;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -49,7 +47,6 @@ import java.util.UUID;
  */
 @RestController
 @RequestMapping("/api/dev/test-orders")
-@Profile("dev")
 @RequiredArgsConstructor
 @Slf4j
 @Tag(name = "Dev — Test orders", description = "DEV ONLY. Inject delivery orders without ecommerce/payment.")
