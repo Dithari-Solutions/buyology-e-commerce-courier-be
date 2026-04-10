@@ -71,6 +71,9 @@ public class SecurityConfig {
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                         // WebSocket upgrade endpoint — auth happens inside STOMP CONNECT via JWT interceptor
                         .requestMatchers("/ws/**").permitAll()
+                        // Dev-only test endpoints — controller is @Profile("dev") so these paths
+                        // don't exist in prod; permitting here avoids needing a token for quick testing
+                        .requestMatchers("/api/dev/**").permitAll()
                         // Courier auth endpoints — public (login, refresh, logout)
                         .requestMatchers(
                                 "/api/auth/courier/login",
