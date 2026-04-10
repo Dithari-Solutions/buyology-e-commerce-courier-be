@@ -4,19 +4,24 @@ import com.buyology.buyology_courier.common.outbox.OutboxEvent;
 import com.buyology.buyology_courier.common.outbox.OutboxEventRepository;
 import com.buyology.buyology_courier.common.outbox.OutboxStatus;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
+import com.buyology.buyology_courier.delivery.domain.DeliveryProof;
 import com.buyology.buyology_courier.delivery.domain.DeliveryStatusHistory;
 import com.buyology.buyology_courier.delivery.domain.enums.DeliveryStatus;
 import com.buyology.buyology_courier.delivery.dto.request.CancelDeliveryRequest;
+import com.buyology.buyology_courier.delivery.dto.request.FailDeliveryRequest;
 import com.buyology.buyology_courier.delivery.dto.request.UpdateDeliveryStatusRequest;
 import com.buyology.buyology_courier.delivery.dto.response.DeliveryOrderResponse;
+import com.buyology.buyology_courier.delivery.dto.response.DeliveryProofResponse;
 import com.buyology.buyology_courier.delivery.dto.response.DeliveryStatusHistoryResponse;
 import com.buyology.buyology_courier.delivery.messaging.config.DeliveryRabbitMQConfig;
 import com.buyology.buyology_courier.delivery.messaging.event.DeliveryOrderReceivedEvent;
 import com.buyology.buyology_courier.delivery.messaging.event.DeliveryStatusChangedEvent;
 import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
+import com.buyology.buyology_courier.delivery.repository.DeliveryProofRepository;
 import com.buyology.buyology_courier.delivery.repository.DeliveryStatusHistoryRepository;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.delivery.service.DeliveryService;
+import com.buyology.buyology_courier.notification.CourierNotificationService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.persistence.EntityNotFoundException;
@@ -39,12 +44,23 @@ import java.util.UUID;
 public class DeliveryServiceImpl implements DeliveryService {
 
     private static final Set<DeliveryStatus> TERMINAL_STATUSES =
-            Set.of(DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED);
+            Set.of(DeliveryStatus.DELIVERED, DeliveryStatus.FAILED, DeliveryStatus.CANCELLED);
+
+    /** Statuses where the courier is actively on the move — location is broadcast to ecommerce. */
+    private static final Set<DeliveryStatus> IN_PROGRESS_STATUSES = Set.of(
+            DeliveryStatus.COURIER_ACCEPTED,
+            DeliveryStatus.ARRIVED_AT_PICKUP,
+            DeliveryStatus.PICKED_UP,
+            DeliveryStatus.ON_THE_WAY,
+            DeliveryStatus.ARRIVED_AT_DESTINATION
+    );
 
     private final DeliveryOrderRepository         deliveryOrderRepository;
     private final DeliveryStatusHistoryRepository statusHistoryRepository;
+    private final DeliveryProofRepository         deliveryProofRepository;
     private final OutboxEventRepository           outboxEventRepository;
     private final ApplicationEventPublisher       eventPublisher;
+    private final CourierNotificationService      notificationService;
     private final ObjectMapper                    objectMapper;
 
     // ── Ingest ────────────────────────────────────────────────────────────────
@@ -85,6 +101,7 @@ public class DeliveryServiceImpl implements DeliveryService {
                 .ecommerceStoreId(event.ecommerceStoreId())
                 .customerName(event.customerName())
                 .customerPhone(event.customerPhone())
+                .customerEmail(event.customerEmail())
                 .pickupAddress(event.pickupAddress())
                 .pickupLat(event.pickupLat())
                 .pickupLng(event.pickupLng())
@@ -144,6 +161,16 @@ public class DeliveryServiceImpl implements DeliveryService {
                 .map(this::toResponse);
     }
 
+    @Override
+    @Transactional(readOnly = true)
+    public Page<DeliveryOrderResponse> findAllByCourier(UUID courierId, DeliveryStatus status, Pageable pageable) {
+        if (status == null) {
+            return deliveryOrderRepository.findByAssignedCourierId(courierId, pageable).map(this::toResponse);
+        }
+        return deliveryOrderRepository.findByAssignedCourierIdAndStatus(courierId, status, pageable)
+                .map(this::toResponse);
+    }
+
     // ── Mutations ─────────────────────────────────────────────────────────────
 
     @Override
@@ -187,6 +214,116 @@ public class DeliveryServiceImpl implements DeliveryService {
         return toResponse(order);
     }
 
+    /**
+     * Saves the pickup proof photo and advances status ARRIVED_AT_PICKUP → PICKED_UP.
+     * Creates a DeliveryProof row if one doesn't exist yet, otherwise updates it.
+     */
+    @Override
+    @Transactional
+    public DeliveryProofResponse submitPickupProof(UUID deliveryId, UUID courierId,
+                                                   String imageUrl, Instant photoTakenAt) {
+        DeliveryOrder order = findOrThrow(deliveryId);
+        validateCourierOwnsDelivery(order, courierId);
+
+        if (order.getStatus() != DeliveryStatus.ARRIVED_AT_PICKUP) {
+            throw new IllegalStateException(
+                    "Pickup proof can only be submitted when status is ARRIVED_AT_PICKUP. Current: "
+                            + order.getStatus());
+        }
+
+        DeliveryProof proof = deliveryProofRepository.findByDeliveryId(deliveryId)
+                .orElseGet(() -> DeliveryProof.builder().delivery(order).build());
+        proof.setPickupImageUrl(imageUrl);
+        proof.setPickupPhotoTakenAt(photoTakenAt != null ? photoTakenAt : Instant.now());
+        deliveryProofRepository.save(proof);
+
+        order.setStatus(DeliveryStatus.PICKED_UP);
+        appendHistory(order, DeliveryStatus.PICKED_UP, null, null, "COURIER",
+                "Pickup proof submitted");
+        publishStatusEvent(order, "COURIER");
+
+        log.info("[Delivery] Pickup proof submitted deliveryId={} courierId={}", deliveryId, courierId);
+        return toProofResponse(proof);
+    }
+
+    /**
+     * Saves the delivery proof photo and advances status ARRIVED_AT_DESTINATION → DELIVERED.
+     */
+    @Override
+    @Transactional
+    public DeliveryProofResponse submitDeliveryProof(UUID deliveryId, UUID courierId,
+                                                     String imageUrl, String deliveredTo,
+                                                     Instant photoTakenAt) {
+        DeliveryOrder order = findOrThrow(deliveryId);
+        validateCourierOwnsDelivery(order, courierId);
+
+        if (order.getStatus() != DeliveryStatus.ARRIVED_AT_DESTINATION) {
+            throw new IllegalStateException(
+                    "Delivery proof can only be submitted when status is ARRIVED_AT_DESTINATION. Current: "
+                            + order.getStatus());
+        }
+
+        DeliveryProof proof = deliveryProofRepository.findByDeliveryId(deliveryId)
+                .orElseGet(() -> DeliveryProof.builder().delivery(order).build());
+        proof.setImageUrl(imageUrl);
+        proof.setDeliveredTo(deliveredTo);
+        proof.setPhotoTakenAt(photoTakenAt != null ? photoTakenAt : Instant.now());
+        deliveryProofRepository.save(proof);
+
+        order.setStatus(DeliveryStatus.DELIVERED);
+        order.setActualDeliveryTime(Instant.now());
+        appendHistory(order, DeliveryStatus.DELIVERED, null, null, "COURIER",
+                "Delivery proof submitted" + (deliveredTo != null ? " — received by: " + deliveredTo : ""));
+        publishStatusEvent(order, "COURIER");
+
+        // Notify the customer asynchronously — runs on eventPublisherExecutor, never blocks the transaction
+        notificationService.notifyCustomerDelivered(order);
+
+        log.info("[Delivery] Delivery proof submitted deliveryId={} courierId={}", deliveryId, courierId);
+        return toProofResponse(proof);
+    }
+
+    /**
+     * Marks a delivery as FAILED. Allowed from any in-progress status.
+     */
+    @Override
+    @Transactional
+    public DeliveryOrderResponse failDelivery(UUID deliveryId, UUID courierId,
+                                              FailDeliveryRequest request) {
+        DeliveryOrder order = findOrThrow(deliveryId);
+        validateCourierOwnsDelivery(order, courierId);
+        validateNotTerminal(order);
+
+        if (!IN_PROGRESS_STATUSES.contains(order.getStatus())) {
+            throw new IllegalStateException(
+                    "Delivery cannot be failed from status: " + order.getStatus());
+        }
+
+        order.setStatus(DeliveryStatus.FAILED);
+        order.setCancelledReason(request.reason());
+        appendHistory(order, DeliveryStatus.FAILED,
+                request.latitude(), request.longitude(),
+                "COURIER", "Failed: " + request.reason());
+        publishStatusEvent(order, "COURIER");
+
+        // Notify the customer with the courier-provided failure reason — runs async
+        notificationService.notifyCustomerFailed(order, request.reason());
+
+        log.info("[Delivery] Marked as FAILED deliveryId={} courierId={} reason='{}'",
+                deliveryId, courierId, request.reason());
+        return toResponse(order);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public DeliveryProofResponse getProof(UUID deliveryId) {
+        findOrThrow(deliveryId);
+        DeliveryProof proof = deliveryProofRepository.findByDeliveryId(deliveryId)
+                .orElseThrow(() -> new jakarta.persistence.EntityNotFoundException(
+                        "No proof found for delivery: " + deliveryId));
+        return toProofResponse(proof);
+    }
+
     @Override
     @Transactional(readOnly = true)
     public List<DeliveryStatusHistoryResponse> getStatusHistory(UUID deliveryId) {
@@ -228,12 +365,12 @@ public class DeliveryServiceImpl implements DeliveryService {
      */
     private void validateStatusTransition(DeliveryStatus current, DeliveryStatus next) {
         boolean valid = switch (current) {
-            case COURIER_ASSIGNED  -> next == DeliveryStatus.COURIER_ACCEPTED
-                                   || next == DeliveryStatus.CANCELLED;
-            case COURIER_ACCEPTED  -> next == DeliveryStatus.ARRIVED_AT_PICKUP;
-            case ARRIVED_AT_PICKUP -> next == DeliveryStatus.PICKED_UP;
-            case PICKED_UP         -> next == DeliveryStatus.ON_THE_WAY;
-            case ON_THE_WAY        -> next == DeliveryStatus.ARRIVED_AT_DESTINATION;
+            case COURIER_ASSIGNED       -> next == DeliveryStatus.COURIER_ACCEPTED
+                                        || next == DeliveryStatus.CANCELLED;
+            case COURIER_ACCEPTED       -> next == DeliveryStatus.ARRIVED_AT_PICKUP;
+            case ARRIVED_AT_PICKUP      -> next == DeliveryStatus.PICKED_UP;
+            case PICKED_UP              -> next == DeliveryStatus.ON_THE_WAY;
+            case ON_THE_WAY             -> next == DeliveryStatus.ARRIVED_AT_DESTINATION;
             case ARRIVED_AT_DESTINATION -> next == DeliveryStatus.DELIVERED;
             default -> false;
         };
@@ -271,7 +408,7 @@ public class DeliveryServiceImpl implements DeliveryService {
 
         String routingKey = switch (order.getStatus()) {
             case DELIVERED -> DeliveryRabbitMQConfig.DELIVERY_COMPLETED_KEY;
-            case CANCELLED -> DeliveryRabbitMQConfig.DELIVERY_CANCELLED_KEY;
+            case CANCELLED, FAILED -> DeliveryRabbitMQConfig.DELIVERY_CANCELLED_KEY;
             default        -> DeliveryRabbitMQConfig.DELIVERY_STATUS_CHANGED_KEY;
         };
 
@@ -303,6 +440,7 @@ public class DeliveryServiceImpl implements DeliveryService {
                 o.getEcommerceStoreId(),
                 o.getCustomerName(),
                 o.getCustomerPhone(),
+                o.getCustomerEmail(),
                 o.getPickupAddress(),
                 o.getPickupLat(),
                 o.getPickupLng(),
@@ -332,6 +470,20 @@ public class DeliveryServiceImpl implements DeliveryService {
                 h.getChangedBy(),
                 h.getNotes(),
                 h.getCreatedAt()
+        );
+    }
+
+    private DeliveryProofResponse toProofResponse(DeliveryProof p) {
+        return new DeliveryProofResponse(
+                p.getId(),
+                p.getDelivery().getId(),
+                p.getPickupImageUrl(),
+                p.getPickupPhotoTakenAt(),
+                p.getImageUrl(),
+                p.getSignatureUrl(),
+                p.getDeliveredTo(),
+                p.getPhotoTakenAt(),
+                p.getCreatedAt()
         );
     }
 }

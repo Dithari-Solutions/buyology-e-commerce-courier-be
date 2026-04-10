@@ -57,6 +57,9 @@ public class DeliveryOrder {
     @Column(name = "customer_phone", length = 50, nullable = false)
     private String customerPhone;
 
+    @Column(name = "customer_email", length = 150)
+    private String customerEmail;
+
     @Column(name = "pickup_address", nullable = false, columnDefinition = "TEXT")
     private String pickupAddress;
 

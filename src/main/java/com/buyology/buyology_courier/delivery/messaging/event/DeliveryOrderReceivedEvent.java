@@ -23,6 +23,7 @@ public record DeliveryOrderReceivedEvent(
 
         String customerName,
         String customerPhone,
+        String customerEmail,
 
         String pickupAddress,
         BigDecimal pickupLat,

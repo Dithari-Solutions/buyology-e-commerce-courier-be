@@ -11,7 +11,6 @@ import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.*;
 import com.buyology.buyology_courier.courier.dto.response.CourierLocationResponse;
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
-import com.buyology.buyology_courier.courier.exception.CourierLocationNotFoundException;
 import com.buyology.buyology_courier.courier.exception.CourierNotActiveException;
 import com.buyology.buyology_courier.courier.exception.CourierNotFoundException;
 import com.buyology.buyology_courier.courier.exception.DuplicatePhoneException;
@@ -20,6 +19,7 @@ import com.buyology.buyology_courier.courier.messaging.config.RabbitMQConfig;
 import com.buyology.buyology_courier.courier.repository.CourierLocationRepository;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.service.impl.CourierServiceImpl;
+import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -33,7 +33,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
-import org.springframework.data.domain.Page;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -52,6 +51,7 @@ class CourierServiceImplTest {
     @Mock CourierLookupService courierLookupService;
     @Mock CourierGeoService courierGeoService;
     @Mock OutboxEventRepository outboxEventRepository;
+    @Mock DeliveryOrderRepository deliveryOrderRepository;
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock StringRedisTemplate stringRedisTemplate;
     @Mock ValueOperations<String, String> valueOps;
@@ -68,6 +68,7 @@ class CourierServiceImplTest {
                 courierLookupService,
                 courierGeoService,
                 outboxEventRepository,
+                deliveryOrderRepository,
                 eventPublisher,
                 new ObjectMapper().findAndRegisterModules(),
                 meterRegistry,
@@ -232,6 +233,9 @@ class CourierServiceImplTest {
             when(courierRepository.existsByIdAndDeletedAtIsNull(courier.getId())).thenReturn(true);
             when(courierRepository.getReferenceById(courier.getId())).thenReturn(courier);
             when(locationRepository.save(any())).thenReturn(location);
+            // No active delivery — location broadcast skipped
+            when(deliveryOrderRepository.findFirstByAssignedCourierIdAndStatusIn(any(), any()))
+                    .thenReturn(Optional.empty());
 
             CourierLocationResponse result = service.recordLocation(courier.getId(), locationRequest());
 

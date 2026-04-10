@@ -6,6 +6,7 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.Collection;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -20,4 +21,19 @@ public interface DeliveryOrderRepository extends JpaRepository<DeliveryOrder, UU
     /** All active (non-terminal) deliveries assigned to a specific courier. */
     Page<DeliveryOrder> findByAssignedCourierIdAndStatusNotIn(
             UUID courierId, Iterable<DeliveryStatus> excludedStatuses, Pageable pageable);
+
+    /** Full delivery history (all statuses) for a courier — used by the mobile history screen. */
+    Page<DeliveryOrder> findByAssignedCourierId(UUID courierId, Pageable pageable);
+
+    /** Full delivery history filtered by a specific status — used by the mobile history screen. */
+    Page<DeliveryOrder> findByAssignedCourierIdAndStatus(
+            UUID courierId, DeliveryStatus status, Pageable pageable);
+
+    /**
+     * Returns the first in-progress delivery for a courier.
+     * Used when recording a location ping to decide whether to broadcast
+     * the position to the ecommerce backend for customer tracking.
+     */
+    Optional<DeliveryOrder> findFirstByAssignedCourierIdAndStatusIn(
+            UUID courierId, Collection<DeliveryStatus> statuses);
 }

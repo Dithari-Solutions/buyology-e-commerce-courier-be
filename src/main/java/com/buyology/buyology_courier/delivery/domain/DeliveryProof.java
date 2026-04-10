@@ -30,6 +30,13 @@ public class DeliveryProof {
     @JoinColumn(name = "delivery_id", nullable = false, unique = true, foreignKey = @ForeignKey(name = "fk_delivery_proofs_order"))
     private DeliveryOrder delivery;
 
+    /** Photo taken by the courier at the pickup location to confirm they received the package. */
+    @Column(name = "pickup_image_url", columnDefinition = "TEXT")
+    private String pickupImageUrl;
+
+    @Column(name = "pickup_photo_taken_at")
+    private Instant pickupPhotoTakenAt;
+
     @Column(name = "image_url", columnDefinition = "TEXT")
     private String imageUrl;
 

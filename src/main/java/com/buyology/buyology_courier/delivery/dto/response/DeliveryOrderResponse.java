@@ -16,6 +16,7 @@ public record DeliveryOrderResponse(
 
         String customerName,
         String customerPhone,
+        String customerEmail,
 
         String pickupAddress,
         BigDecimal pickupLat,

@@ -55,6 +55,29 @@
       "name": "management.tracing.sampling.probability",
       "type": "java.lang.Double",
       "description": "Fraction of requests to sample for distributed tracing (0.0–1.0). Use 1.0 in dev, 0.1 in prod."
+    },
+    {
+      "name": "notification.email.enabled",
+      "type": "java.lang.Boolean",
+      "defaultValue": false,
+      "description": "Master switch for email notifications. Set to true and supply twilio.sendgrid.* credentials."
+    },
+    {
+      "name": "twilio.sendgrid.api-key",
+      "type": "java.lang.String",
+      "description": "Twilio SendGrid API key (SG.xxx). Required when notification.email.enabled=true."
+    },
+    {
+      "name": "twilio.sendgrid.from-email",
+      "type": "java.lang.String",
+      "defaultValue": "noreply@buyology.com",
+      "description": "Verified sender email address shown in the From field of courier assignment emails."
+    },
+    {
+      "name": "twilio.sendgrid.from-name",
+      "type": "java.lang.String",
+      "defaultValue": "Buyology Courier",
+      "description": "Display name shown alongside the from-email in courier assignment emails."
     }
   ]
 }

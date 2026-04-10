@@ -30,6 +30,7 @@ import com.buyology.buyology_courier.delivery.messaging.config.DeliveryRabbitMQC
 import com.buyology.buyology_courier.delivery.messaging.event.DeliveryStatusChangedEvent;
 import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
 import com.buyology.buyology_courier.delivery.repository.DeliveryStatusHistoryRepository;
+import com.buyology.buyology_courier.notification.CourierNotificationService;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
@@ -75,6 +76,7 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
     private final OutboxEventRepository            outboxEventRepository;
     private final ApplicationEventPublisher        eventPublisher;
     private final ObjectMapper                     objectMapper;
+    private final CourierNotificationService       notificationService;
 
     // ── Entry points (Spring application event listeners) ────────────────────
 
@@ -250,6 +252,11 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 new DeliveryStatusChangedEvent(
                         freshOrder.getId(), freshOrder.getEcommerceOrderId(),
                         DeliveryStatus.COURIER_ASSIGNED, selectedCourier.getId(), "SYSTEM", Instant.now()));
+
+        // Notify the courier: WebSocket push (shows "New order available" in mobile app)
+        // + email (fallback for couriers not currently connected).
+        // Runs async on eventPublisherExecutor — does NOT block this transaction.
+        notificationService.notifyNewAssignment(selectedCourier, assignment, freshOrder);
 
         log.info("[Assignment] Assigned courierId={} to deliveryId={} attempt={}",
                 selectedCourier.getId(), freshOrder.getId(), attemptNumber);

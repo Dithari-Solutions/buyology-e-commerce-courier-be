@@ -9,5 +9,6 @@ public enum DeliveryStatus {
     ON_THE_WAY,
     ARRIVED_AT_DESTINATION,
     DELIVERED,
+    FAILED,
     CANCELLED
 }

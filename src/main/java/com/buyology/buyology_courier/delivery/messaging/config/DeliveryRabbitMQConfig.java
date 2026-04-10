@@ -40,6 +40,13 @@ public class DeliveryRabbitMQConfig {
     public static final String ASSIGNMENT_REJECTED_KEY      = "delivery.courier.assignment.rejected";
     public static final String ASSIGNMENT_EXHAUSTED_KEY     = "delivery.assignment.exhausted";
 
+    /**
+     * Published on every GPS ping while a delivery is in-progress.
+     * The ecommerce backend subscribes to this key and forwards coordinates
+     * to the customer for real-time courier tracking.
+     */
+    public static final String LOCATION_UPDATED_KEY         = "delivery.location.updated";
+
     // ── Queue names ───────────────────────────────────────────────────────────
     public static final String DELIVERY_ORDER_RECEIVED_QUEUE = "delivery.order.received.queue";
 

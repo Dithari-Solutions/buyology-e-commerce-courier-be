@@ -69,6 +69,8 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         // OpenAPI / Swagger UI — public in dev, restrict in prod via profile
                         .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
+                        // WebSocket upgrade endpoint — auth happens inside STOMP CONNECT via JWT interceptor
+                        .requestMatchers("/ws/**").permitAll()
                         // Courier auth endpoints — public (login, refresh, logout)
                         .requestMatchers(
                                 "/api/auth/courier/login",

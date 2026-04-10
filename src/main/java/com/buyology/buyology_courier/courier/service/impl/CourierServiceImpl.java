@@ -24,6 +24,10 @@ import com.buyology.buyology_courier.courier.repository.spec.CourierSpecificatio
 import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.courier.service.CourierLookupService;
 import com.buyology.buyology_courier.courier.service.CourierService;
+import com.buyology.buyology_courier.delivery.domain.enums.DeliveryStatus;
+import com.buyology.buyology_courier.delivery.messaging.config.DeliveryRabbitMQConfig;
+import com.buyology.buyology_courier.delivery.messaging.event.CourierLocationBroadcastEvent;
+import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -49,11 +53,22 @@ public class CourierServiceImpl implements CourierService {
     private static final Duration MAX_LOCATION_HISTORY_RANGE = Duration.ofDays(7);
     private static final int MAX_LOCATION_PINGS_PER_MINUTE   = 60;
 
+    /** Statuses that indicate an active delivery requiring live location broadcast. */
+    private static final java.util.Set<DeliveryStatus> ACTIVE_DELIVERY_STATUSES =
+            java.util.Set.of(
+                    DeliveryStatus.COURIER_ACCEPTED,
+                    DeliveryStatus.ARRIVED_AT_PICKUP,
+                    DeliveryStatus.PICKED_UP,
+                    DeliveryStatus.ON_THE_WAY,
+                    DeliveryStatus.ARRIVED_AT_DESTINATION
+            );
+
     private final CourierRepository         courierRepository;
     private final CourierLocationRepository locationRepository;
     private final CourierLookupService      courierLookupService;
     private final CourierGeoService         courierGeoService;
     private final OutboxEventRepository     outboxEventRepository;
+    private final DeliveryOrderRepository   deliveryOrderRepository;
     // Still used for high-frequency location events (fire-and-forget is acceptable)
     private final ApplicationEventPublisher eventPublisher;
     private final ObjectMapper              objectMapper;
@@ -260,6 +275,10 @@ public class CourierServiceImpl implements CourierService {
                 )
         );
 
+        // If the courier has an active delivery, broadcast coordinates to the ecommerce backend
+        // so the customer can track the courier in real-time.
+        broadcastLocationToEcommerce(courierId, saved);
+
         meterRegistry.counter("courier.location.pings.total").increment();
         return CourierMapper.toLocationResponse(saved);
     }
@@ -313,6 +332,41 @@ public class CourierServiceImpl implements CourierService {
             throw new RateLimitExceededException(
                     "Location ping rate limit exceeded. Maximum " + MAX_LOCATION_PINGS_PER_MINUTE + " pings per minute per courier.");
         }
+    }
+
+    /**
+     * If the courier has an in-progress delivery, writes a location broadcast outbox event
+     * so the ecommerce backend can forward coordinates to the customer in real-time.
+     * Uses the same transactional outbox pattern — survives broker outages.
+     */
+    private void broadcastLocationToEcommerce(UUID courierId, CourierLocation saved) {
+        deliveryOrderRepository
+                .findFirstByAssignedCourierIdAndStatusIn(courierId, ACTIVE_DELIVERY_STATUSES)
+                .ifPresent(order -> {
+                    CourierLocationBroadcastEvent broadcastEvent = CourierLocationBroadcastEvent.of(
+                            order.getId(),
+                            order.getEcommerceOrderId(),
+                            courierId,
+                            saved.getLatitude(),
+                            saved.getLongitude(),
+                            saved.getHeading(),
+                            saved.getSpeed(),
+                            saved.getRecordedAt()
+                    );
+                    try {
+                        outboxEventRepository.save(OutboxEvent.builder()
+                                .exchange(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE)
+                                .routingKey(DeliveryRabbitMQConfig.LOCATION_UPDATED_KEY)
+                                .payload(objectMapper.writeValueAsString(broadcastEvent))
+                                .eventVersion(1)
+                                .status(OutboxStatus.PENDING)
+                                .retryCount(0)
+                                .build());
+                    } catch (JsonProcessingException ex) {
+                        log.warn("[Location] Failed to serialise location broadcast for courierId={} deliveryId={}: {}",
+                                courierId, order.getId(), ex.getMessage());
+                    }
+                });
     }
 
     /**
