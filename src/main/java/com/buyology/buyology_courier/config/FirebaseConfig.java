@@ -13,6 +13,7 @@ import org.springframework.context.annotation.Configuration;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 /**
  * Initialises the Firebase Admin SDK and exposes a {@link FirebaseMessaging} bean.
@@ -40,11 +41,23 @@ public class FirebaseConfig {
         if (serviceAccountJson == null || serviceAccountJson.isBlank()) {
             throw new IllegalStateException(
                     "firebase.enabled=true but FIREBASE_SERVICE_ACCOUNT_JSON is empty. " +
-                    "Set the env var to the Firebase service account JSON.");
+                    "Set the env var to the base64-encoded Firebase service account JSON.");
+        }
+
+        // The private_key field inside the JSON contains real newlines which break
+        // .env file parsing. Store the secret base64-encoded; detect and decode here.
+        byte[] jsonBytes;
+        String trimmed = serviceAccountJson.trim();
+        if (trimmed.startsWith("{")) {
+            // Plain JSON (local dev with docker-compose inline value)
+            jsonBytes = trimmed.getBytes(StandardCharsets.UTF_8);
+        } else {
+            // Base64-encoded JSON (GitHub secret → .env → container)
+            jsonBytes = Base64.getDecoder().decode(trimmed);
         }
 
         GoogleCredentials credentials = GoogleCredentials.fromStream(
-                new ByteArrayInputStream(serviceAccountJson.getBytes(StandardCharsets.UTF_8))
+                new ByteArrayInputStream(jsonBytes)
         );
 
         FirebaseOptions options = FirebaseOptions.builder()
