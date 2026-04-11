@@ -6,7 +6,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.time.Instant;
 import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -36,4 +38,11 @@ public interface DeliveryOrderRepository extends JpaRepository<DeliveryOrder, UU
      */
     Optional<DeliveryOrder> findFirstByAssignedCourierIdAndStatusIn(
             UUID courierId, Collection<DeliveryStatus> statuses);
+
+    /**
+     * Finds orders stuck in CREATED status — i.e. initial assignment found no
+     * courier. Used by the retry job to re-attempt assignment once couriers
+     * come online.
+     */
+    List<DeliveryOrder> findByStatusAndCreatedAtBefore(DeliveryStatus status, Instant cutoff);
 }

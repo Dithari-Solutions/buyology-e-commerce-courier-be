@@ -4,7 +4,9 @@ import com.buyology.buyology_courier.assignment.dto.request.AssignmentRespondReq
 import com.buyology.buyology_courier.assignment.dto.response.AssignmentResponse;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
+import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
 
+import java.util.Set;
 import java.util.UUID;
 
 public interface CourierAssignmentService {
@@ -35,4 +37,11 @@ public interface CourierAssignmentService {
      * Returns the assignment details for the authenticated courier.
      */
     AssignmentResponse getAssignment(UUID assignmentId, UUID courierId);
+
+    /**
+     * Searches for the nearest eligible courier and creates a PENDING assignment.
+     * Called directly by {@code StaleOrderRetryJob} to re-attempt assignment for
+     * orders that found no courier on first try.
+     */
+    void attemptAssignment(DeliveryOrder order, int attemptNumber, Set<UUID> excludedCourierIds);
 }
