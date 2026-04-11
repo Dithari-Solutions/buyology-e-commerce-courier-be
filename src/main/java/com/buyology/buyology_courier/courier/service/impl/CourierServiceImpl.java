@@ -224,6 +224,17 @@ public class CourierServiceImpl implements CourierService {
         );
     }
 
+    // ── Push token ────────────────────────────────────────────────────────────
+
+    @Override
+    @Transactional
+    public void registerPushToken(UUID courierId, RegisterPushTokenRequest request) {
+        Courier courier = getOrThrow(courierId);
+        courier.setFcmToken(request.fcmToken());
+        courierRepository.save(courier);
+        log.info("[PushToken] Registered FCM token for courierId={}", courierId);
+    }
+
     // ── Location ──────────────────────────────────────────────────────────────
 
     @Override

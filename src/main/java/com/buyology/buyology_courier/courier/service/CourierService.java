@@ -39,6 +39,13 @@ public interface CourierService {
 
     void delete(UUID id);
 
+    /**
+     * Registers or replaces the courier's FCM device token.
+     * Called by the mobile app immediately after login so push notifications
+     * can be delivered to the current device.
+     */
+    void registerPushToken(UUID courierId, RegisterPushTokenRequest request);
+
     CourierLocationResponse recordLocation(UUID courierId, RecordLocationRequest request);
 
     CourierLocationResponse getLatestLocation(UUID courierId);

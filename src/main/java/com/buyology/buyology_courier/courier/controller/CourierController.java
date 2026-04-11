@@ -23,6 +23,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -162,6 +163,25 @@ public class CourierController {
         courierService.delete(id);
         adminAuditService.log(AdminAction.COURIER_DELETED, id, null, httpRequest);
         return ResponseEntity.noContent().build();
+    }
+
+    // ── Push token ────────────────────────────────────────────────────────────
+
+    /**
+     * Registers or replaces the courier's FCM device token.
+     * Called by the mobile app immediately after login.
+     * The courier ID is extracted from the JWT — no path param needed.
+     */
+    @PostMapping("/push-token")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasRole('COURIER')")
+    @Operation(summary = "Register or update the courier's FCM push-notification token")
+    public void registerPushToken(
+            @Valid @RequestBody RegisterPushTokenRequest request,
+            Authentication authentication
+    ) {
+        UUID courierId = UUID.fromString(((Jwt) authentication.getPrincipal()).getSubject());
+        courierService.registerPushToken(courierId, request);
     }
 
     // ── Location ──────────────────────────────────────────────────────────────

@@ -73,6 +73,11 @@ public class Courier {
     @Column(name = "driving_licence_image_url")
     private String drivingLicenceImageUrl;
 
+    // Firebase Cloud Messaging device token — registered by the mobile app after login.
+    // NULL until the courier posts their first push-token registration.
+    @Column(name = "fcm_token", length = 512)
+    private String fcmToken;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private Instant createdAt;
