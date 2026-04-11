@@ -4,6 +4,10 @@ import com.buyology.buyology_courier.assignment.domain.CourierAssignment;
 import com.buyology.buyology_courier.config.TwilioSendGridProperties;
 import com.buyology.buyology_courier.courier.domain.Courier;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
+import com.google.firebase.messaging.FirebaseMessaging;
+import com.google.firebase.messaging.FirebaseMessagingException;
+import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.Notification;
 import com.sendgrid.Method;
 import com.sendgrid.Request;
 import com.sendgrid.Response;
@@ -13,6 +17,7 @@ import com.sendgrid.helpers.mail.objects.Content;
 import com.sendgrid.helpers.mail.objects.Email;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
@@ -41,6 +46,10 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
     private final SimpMessagingTemplate     messagingTemplate;
     private final TwilioSendGridProperties  sendGridProps;
 
+    /** Null when {@code firebase.enabled=false} — FCM pushes are skipped gracefully. */
+    @Autowired(required = false)
+    private FirebaseMessaging firebaseMessaging;
+
     @Value("${notification.email.enabled:false}")
     private boolean emailEnabled;
 
@@ -48,6 +57,7 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
     @Async("eventPublisherExecutor")
     public void notifyNewAssignment(Courier courier, CourierAssignment assignment, DeliveryOrder order) {
         pushWebSocket(courier, assignment, order);
+        sendFcmPush(courier, assignment, order);
         if (emailEnabled) {
             sendEmail(courier, assignment, order);
         }
@@ -100,6 +110,48 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
             // Non-fatal: courier may not be connected — email is the fallback
             log.warn("[Notification] WS push failed courierId={} assignmentId={} — {}",
                     courierId, assignment.getId(), ex.getMessage());
+        }
+    }
+
+    // ── FCM push ──────────────────────────────────────────────────────────────
+
+    private void sendFcmPush(Courier courier, CourierAssignment assignment, DeliveryOrder order) {
+        if (firebaseMessaging == null) {
+            log.debug("[Notification] FCM disabled (firebase.enabled=false) — skipping push for courierId={}",
+                    courier.getId());
+            return;
+        }
+        if (courier.getFcmToken() == null || courier.getFcmToken().isBlank()) {
+            log.debug("[Notification] No FCM token for courierId={} — skipping push", courier.getId());
+            return;
+        }
+
+        try {
+            String body = order.getPickupAddress() + " → " + order.getDropoffAddress();
+
+            Message message = Message.builder()
+                    .setToken(courier.getFcmToken())
+                    .setNotification(Notification.builder()
+                            .setTitle("New delivery order")
+                            .setBody(body)
+                            .build())
+                    // Data fields — app reads these to route to the accept/reject screen
+                    .putData("assignmentId",  assignment.getId().toString())
+                    .putData("deliveryId",    order.getId().toString())
+                    .putData("pickupAddress", order.getPickupAddress())
+                    .putData("dropoffAddress", order.getDropoffAddress())
+                    .putData("deliveryFee",   order.getDeliveryFee() != null ? order.getDeliveryFee().toPlainString() : "")
+                    .putData("priority",      order.getPriority() != null ? order.getPriority().name() : "STANDARD")
+                    .build();
+
+            String messageId = firebaseMessaging.send(message);
+            log.info("[Notification] FCM push sent courierId={} assignmentId={} messageId={}",
+                    courier.getId(), assignment.getId(), messageId);
+
+        } catch (FirebaseMessagingException ex) {
+            // Non-fatal — WebSocket is the primary real-time channel; FCM is a fallback
+            log.warn("[Notification] FCM push failed courierId={} assignmentId={} — {} {}",
+                    courier.getId(), assignment.getId(), ex.getErrorCode(), ex.getMessage());
         }
     }
 
