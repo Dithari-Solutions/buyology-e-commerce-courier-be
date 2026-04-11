@@ -48,6 +48,7 @@ public class DeliveryServiceImpl implements DeliveryService {
 
     /** Statuses where the courier is actively on the move — location is broadcast to ecommerce. */
     private static final Set<DeliveryStatus> IN_PROGRESS_STATUSES = Set.of(
+            DeliveryStatus.COURIER_ASSIGNED,
             DeliveryStatus.COURIER_ACCEPTED,
             DeliveryStatus.ARRIVED_AT_PICKUP,
             DeliveryStatus.PICKED_UP,
@@ -210,6 +211,9 @@ public class DeliveryServiceImpl implements DeliveryService {
         appendHistory(order, DeliveryStatus.CANCELLED, null, null, "SYSTEM", request.reason());
         publishStatusEvent(order, "SYSTEM");
 
+        // Notify the assigned courier (if any) via FCM push + email so they stop the job immediately
+        notificationService.notifyCourierCancelled(order, request.reason());
+
         log.info("[Delivery] Cancelled deliveryId={} reason='{}'", deliveryId, request.reason());
         return toResponse(order);
     }
@@ -278,6 +282,8 @@ public class DeliveryServiceImpl implements DeliveryService {
 
         // Notify the customer asynchronously — runs on eventPublisherExecutor, never blocks the transaction
         notificationService.notifyCustomerDelivered(order);
+        // Notify the courier (FCM push + email) that the delivery is complete
+        notificationService.notifyCourierDelivered(order);
 
         log.info("[Delivery] Delivery proof submitted deliveryId={} courierId={}", deliveryId, courierId);
         return toProofResponse(proof);

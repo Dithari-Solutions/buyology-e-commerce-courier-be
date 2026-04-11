@@ -30,4 +30,18 @@ public interface CourierNotificationService {
      * No-op if the delivery has no customer email address or email is disabled.
      */
     void notifyCustomerFailed(DeliveryOrder order, String reason);
+
+    /**
+     * Notifies the assigned courier (FCM push + email) that the delivery they completed
+     * is now marked DELIVERED. Fired after submitDeliveryProof succeeds.
+     * No-op if the delivery has no assigned courier or the courier has no FCM token / email.
+     */
+    void notifyCourierDelivered(DeliveryOrder order);
+
+    /**
+     * Notifies the assigned courier (FCM push + email) that the order has been cancelled
+     * by the customer or operations. Fired by the cancel flow.
+     * No-op if no courier is assigned or the courier has no FCM token / email.
+     */
+    void notifyCourierCancelled(DeliveryOrder order, String reason);
 }

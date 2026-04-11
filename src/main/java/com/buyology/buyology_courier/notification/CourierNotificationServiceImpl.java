@@ -82,6 +82,57 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
 
     @Override
     @Async("eventPublisherExecutor")
+    public void notifyCourierDelivered(DeliveryOrder order) {
+        Courier courier = order.getAssignedCourier();
+        if (courier == null) return;
+
+        sendFcmToDevice(courier,
+                "Delivery completed!",
+                "Job done — order " + order.getEcommerceOrderId() + " delivered successfully.",
+                java.util.Map.of(
+                        "type",            "DELIVERY_COMPLETED",
+                        "deliveryId",      order.getId().toString(),
+                        "ecommerceOrderId", order.getEcommerceOrderId().toString()
+                ));
+
+        if (emailEnabled && courier.getEmail() != null && !courier.getEmail().isBlank()) {
+            sendCustomerEmail(
+                    courier.getEmail(),
+                    courier.getFirstName(),
+                    "Delivery completed — Buyology Courier",
+                    buildCourierDeliveredEmailBody(courier, order)
+            );
+        }
+    }
+
+    @Override
+    @Async("eventPublisherExecutor")
+    public void notifyCourierCancelled(DeliveryOrder order, String reason) {
+        Courier courier = order.getAssignedCourier();
+        if (courier == null) return;
+
+        sendFcmToDevice(courier,
+                "Order cancelled",
+                "The order to " + order.getDropoffAddress() + " has been cancelled.",
+                java.util.Map.of(
+                        "type",            "ORDER_CANCELLED",
+                        "deliveryId",      order.getId().toString(),
+                        "ecommerceOrderId", order.getEcommerceOrderId().toString(),
+                        "reason",          reason != null ? reason : ""
+                ));
+
+        if (emailEnabled && courier.getEmail() != null && !courier.getEmail().isBlank()) {
+            sendCustomerEmail(
+                    courier.getEmail(),
+                    courier.getFirstName(),
+                    "Order cancelled — Buyology Courier",
+                    buildCourierCancelledEmailBody(courier, order, reason)
+            );
+        }
+    }
+
+    @Override
+    @Async("eventPublisherExecutor")
     public void notifyCustomerFailed(DeliveryOrder order, String reason) {
         if (!emailEnabled) return;
         if (order.getCustomerEmail() == null || order.getCustomerEmail().isBlank()) {
@@ -268,6 +319,87 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
                 order.getCustomerName(),
                 order.getDropoffAddress(),
                 reason,
+                order.getEcommerceOrderId()
+        );
+    }
+
+    // ── Generic FCM helper (for courier-targeted pushes beyond new-assignment) ──
+
+    private void sendFcmToDevice(Courier courier, String title, String body,
+                                 java.util.Map<String, String> dataFields) {
+        if (firebaseMessaging == null) return;
+        if (courier.getFcmToken() == null || courier.getFcmToken().isBlank()) return;
+        try {
+            Message.Builder builder = Message.builder()
+                    .setToken(courier.getFcmToken())
+                    .setNotification(Notification.builder().setTitle(title).setBody(body).build());
+            dataFields.forEach(builder::putData);
+            String messageId = firebaseMessaging.send(builder.build());
+            log.info("[Notification] FCM push sent courierId={} messageId={}", courier.getId(), messageId);
+        } catch (FirebaseMessagingException ex) {
+            log.warn("[Notification] FCM push failed courierId={} — {} {}", courier.getId(),
+                    ex.getErrorCode(), ex.getMessage());
+        }
+    }
+
+    // ── Courier outcome emails ─────────────────────────────────────────────────
+
+    private String buildCourierDeliveredEmailBody(Courier courier, DeliveryOrder order) {
+        return """
+                <html><body style="font-family:Arial,sans-serif;color:#333">
+                <h2 style="color:#2e7d32">Delivery completed — great job!</h2>
+                <p>Hi %s,</p>
+                <p>You have successfully delivered the order. Here's a summary:</p>
+                <table style="border-collapse:collapse;width:100%%">
+                  <tr><td style="padding:6px;font-weight:bold">Pickup</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr style="background:#f5f5f5">
+                      <td style="padding:6px;font-weight:bold">Drop-off</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr><td style="padding:6px;font-weight:bold">Delivery fee</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr style="background:#f5f5f5">
+                      <td style="padding:6px;font-weight:bold">Order reference</td>
+                      <td style="padding:6px;font-size:12px;color:#888">%s</td></tr>
+                </table>
+                <p>Keep up the great work!</p>
+                <p style="margin-top:24px;font-size:12px;color:#aaa">
+                  This is an automated message from Buyology Courier. Do not reply.
+                </p>
+                </body></html>
+                """.formatted(
+                courier.getFirstName(),
+                order.getPickupAddress(),
+                order.getDropoffAddress(),
+                order.getDeliveryFee() != null ? order.getDeliveryFee().toPlainString() : "—",
+                order.getEcommerceOrderId()
+        );
+    }
+
+    private String buildCourierCancelledEmailBody(Courier courier, DeliveryOrder order, String reason) {
+        return """
+                <html><body style="font-family:Arial,sans-serif;color:#333">
+                <h2 style="color:#c62828">Order cancelled</h2>
+                <p>Hi %s,</p>
+                <p>The following order has been cancelled. You do not need to proceed with this delivery.</p>
+                <table style="border-collapse:collapse;width:100%%">
+                  <tr><td style="padding:6px;font-weight:bold">Drop-off</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr style="background:#f9f0f0">
+                      <td style="padding:6px;font-weight:bold;color:#c62828">Reason</td>
+                      <td style="padding:6px;color:#c62828">%s</td></tr>
+                  <tr><td style="padding:6px;font-weight:bold">Order reference</td>
+                      <td style="padding:6px;font-size:12px;color:#888">%s</td></tr>
+                </table>
+                <p>If you have already picked up the package, please contact operations immediately.</p>
+                <p style="margin-top:24px;font-size:12px;color:#aaa">
+                  This is an automated message from Buyology Courier. Do not reply.
+                </p>
+                </body></html>
+                """.formatted(
+                courier.getFirstName(),
+                order.getDropoffAddress(),
+                reason != null ? reason : "No reason provided",
                 order.getEcommerceOrderId()
         );
     }

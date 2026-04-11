@@ -14,6 +14,7 @@ import com.buyology.buyology_courier.assignment.messaging.event.CourierAssignmen
 import com.buyology.buyology_courier.assignment.repository.CourierAssignmentRepository;
 import com.buyology.buyology_courier.assignment.service.CourierAssignmentService;
 import com.buyology.buyology_courier.assignment.service.CourierGeoService;
+import com.buyology.buyology_courier.assignment.service.event.CourierAssignedApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
 import com.buyology.buyology_courier.assignment.util.HaversineUtil;
@@ -207,12 +208,11 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         DeliveryOrder freshOrder = deliveryOrderRepository.findById(order.getId()).orElse(null);
         if (freshOrder == null) return;
 
-        // Idempotency: only proceed if still in the expected status
-        boolean isFirstAttempt = attemptNumber == 1;
-        DeliveryStatus expectedStatus = isFirstAttempt ? DeliveryStatus.CREATED : DeliveryStatus.COURIER_ASSIGNED;
-        if (freshOrder.getStatus() != expectedStatus) {
-            log.info("[Assignment] Skipping — deliveryId={} status={} (expected {})",
-                    freshOrder.getId(), freshOrder.getStatus(), expectedStatus);
+        // Idempotency: only proceed if still in CREATED status.
+        // If it's already COURIER_ASSIGNED, another assignment attempt is in flight or won.
+        if (freshOrder.getStatus() != DeliveryStatus.CREATED) {
+            log.info("[Assignment] Skipping — deliveryId={} status={} (expected CREATED)",
+                    freshOrder.getId(), freshOrder.getStatus());
             return;
         }
 
@@ -255,11 +255,25 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
         // Notify the courier: WebSocket push (shows "New order available" in mobile app)
         // + email (fallback for couriers not currently connected).
-        // Runs async on eventPublisherExecutor — does NOT block this transaction.
-        notificationService.notifyNewAssignment(selectedCourier, assignment, freshOrder);
+        // Triggered async AFTER this transaction commits via CourierAssignedApplicationEvent.
+        eventPublisher.publishEvent(CourierAssignedApplicationEvent.of(selectedCourier, assignment, freshOrder));
 
         log.info("[Assignment] Assigned courierId={} to deliveryId={} attempt={}",
                 selectedCourier.getId(), freshOrder.getId(), attemptNumber);
+    }
+
+    // ── Listeners ─────────────────────────────────────────────────────────────
+
+    /**
+     * Sends push notifications and emails to the courier after an assignment
+     * transaction has committed. Runs on the async thread pool.
+     */
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async("eventPublisherExecutor")
+    public void onCourierAssigned(CourierAssignedApplicationEvent event) {
+        log.info("[Assignment] onCourierAssigned — triggering notifications for courierId={} assignmentId={}",
+                event.courier().getId(), event.assignment().getId());
+        notificationService.notifyNewAssignment(event.courier(), event.assignment(), event.order());
     }
 
     // ── Accept / Reject ───────────────────────────────────────────────────────
@@ -329,6 +343,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
         DeliveryOrder order = assignment.getDelivery();
 
+        // Clear the current courier from the order entity so it's "unassigned"
+        // while we wait for the next attempt or if we exhaust all attempts.
+        order.setAssignedCourier(null);
+
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
                 DeliveryRabbitMQConfig.ASSIGNMENT_REJECTED_KEY,
                 CourierAssignmentRejectedEvent.of(order.getId(), order.getEcommerceOrderId(),
@@ -338,6 +356,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         int totalAttempts = assignmentRepository.countByDelivery(order);
 
         if (totalAttempts < MAX_ASSIGNMENT_ATTEMPTS) {
+            // Revert status to CREATED so it's eligible for reassignment logic
+            order.setStatus(DeliveryStatus.CREATED);
+            deliveryOrderRepository.save(order);
+
             // Collect all rejected courier IDs for this delivery
             Set<UUID> excludedIds = assignmentRepository
                     .findByDeliveryOrderByAttemptNumberDesc(order)
@@ -353,12 +375,22 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
             log.info("[Assignment] Rejected assignmentId={} by courierId={}, triggering reassignment attempt={}",
                     assignment.getId(), assignment.getCourier().getId(), totalAttempts + 1);
         } else {
-            // All attempts exhausted — alert admins
+            // All attempts exhausted — mark order as FAILED and alert admins
+            order.setStatus(DeliveryStatus.FAILED);
+            deliveryOrderRepository.save(order);
+
             saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
                     DeliveryRabbitMQConfig.ASSIGNMENT_EXHAUSTED_KEY,
                     AssignmentExhaustedEvent.of(order.getId(), order.getEcommerceOrderId(), totalAttempts));
             log.error("[Assignment] EXHAUSTED deliveryId={} after {} attempts", order.getId(), totalAttempts);
         }
+
+        statusHistoryRepository.save(DeliveryStatusHistory.builder()
+                .delivery(order)
+                .status(order.getStatus())
+                .changedBy("SYSTEM")
+                .notes("Courier " + assignment.getCourier().getId() + " rejected: " + reason)
+                .build());
 
         return toResponse(assignment);
     }
