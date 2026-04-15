@@ -15,6 +15,7 @@ import com.buyology.buyology_courier.assignment.repository.CourierAssignmentRepo
 import com.buyology.buyology_courier.assignment.service.CourierAssignmentService;
 import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.assignment.service.event.CourierAssignedApplicationEvent;
+import com.buyology.buyology_courier.assignment.service.event.CourierBecameAvailableApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
 import com.buyology.buyology_courier.assignment.util.HaversineUtil;
@@ -45,6 +46,7 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -60,6 +62,13 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
     /** Max assignment retries per delivery before giving up and alerting admins. */
     private static final int MAX_ASSIGNMENT_ATTEMPTS = 3;
+
+    /**
+     * Grace period in seconds — skip orders younger than this when scanning on
+     * courier-available events to avoid racing with the in-flight async assignment
+     * that fires right after order ingest.
+     */
+    private static final int GRACE_SECONDS = 20;
 
     /**
      * Radius tiers searched in order (km).
@@ -119,6 +128,42 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
             return;
         }
         attemptAssignment(order, event.nextAttemptNumber(), event.excludedCourierIds());
+    }
+
+    /**
+     * Triggered after a courier marks themselves available. Immediately scans all
+     * orders stuck in CREATED status and attempts assignment for each, so they don't
+     * have to wait up to 30 s for the next StaleOrderRetryJob tick.
+     *
+     * <p>Uses the same GRACE_SECONDS cutoff as the retry job to avoid racing with
+     * an in-flight async assignment that hasn't committed yet.
+     */
+    @Override
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    @Async("eventPublisherExecutor")
+    public void onCourierBecameAvailable(CourierBecameAvailableApplicationEvent event) {
+        log.info("[Assignment] Courier {} became available — scanning CREATED orders", event.courierId());
+
+        Instant cutoff = Instant.now().minus(GRACE_SECONDS, ChronoUnit.SECONDS);
+        List<DeliveryOrder> pending = deliveryOrderRepository
+                .findByStatusAndCreatedAtBefore(DeliveryStatus.CREATED, cutoff);
+
+        if (pending.isEmpty()) {
+            log.debug("[Assignment] No pending CREATED orders for courierId={}", event.courierId());
+            return;
+        }
+
+        log.info("[Assignment] Found {} CREATED order(s) to retry for courierId={}",
+                pending.size(), event.courierId());
+
+        for (DeliveryOrder order : pending) {
+            try {
+                attemptAssignment(order, 1, Collections.emptySet());
+            } catch (Exception ex) {
+                log.error("[Assignment] Retry failed for deliveryId={} on courier-available trigger: {}",
+                        order.getId(), ex.getMessage());
+            }
+        }
     }
 
     // ── Core assignment logic ─────────────────────────────────────────────────

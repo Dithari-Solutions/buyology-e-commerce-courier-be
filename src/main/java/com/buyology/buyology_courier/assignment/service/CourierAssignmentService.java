@@ -2,6 +2,7 @@ package com.buyology.buyology_courier.assignment.service;
 
 import com.buyology.buyology_courier.assignment.dto.request.AssignmentRespondRequest;
 import com.buyology.buyology_courier.assignment.dto.response.AssignmentResponse;
+import com.buyology.buyology_courier.assignment.service.event.CourierBecameAvailableApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
@@ -37,6 +38,12 @@ public interface CourierAssignmentService {
      * Returns the assignment details for the authenticated courier.
      */
     AssignmentResponse getAssignment(UUID assignmentId, UUID courierId);
+
+    /**
+     * Triggered after a courier marks themselves available. Scans all CREATED orders
+     * and attempts assignment immediately rather than waiting for the retry job tick.
+     */
+    void onCourierBecameAvailable(CourierBecameAvailableApplicationEvent event);
 
     /**
      * Searches for the nearest eligible courier and creates a PENDING assignment.

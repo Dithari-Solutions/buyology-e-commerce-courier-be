@@ -22,6 +22,7 @@ import com.buyology.buyology_courier.courier.repository.CourierLocationRepositor
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.repository.spec.CourierSpecification;
 import com.buyology.buyology_courier.assignment.service.CourierGeoService;
+import com.buyology.buyology_courier.assignment.service.event.CourierBecameAvailableApplicationEvent;
 import com.buyology.buyology_courier.courier.service.CourierLookupService;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import com.buyology.buyology_courier.delivery.domain.enums.DeliveryStatus;
@@ -200,6 +201,13 @@ public class CourierServiceImpl implements CourierService {
                 RabbitMQConfig.COURIER_AVAILABILITY_CHANGED_KEY,
                 CourierAvailabilityChangedEvent.of(id, request.available())
         );
+
+        // When a courier comes online and marks themselves available, immediately
+        // trigger a scan of all pending CREATED orders so they don't have to wait
+        // for the next StaleOrderRetryJob tick.
+        if (request.available()) {
+            eventPublisher.publishEvent(new CourierBecameAvailableApplicationEvent(id));
+        }
 
         return CourierMapper.toResponse(saved);
     }
