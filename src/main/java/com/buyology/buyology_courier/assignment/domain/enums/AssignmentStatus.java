@@ -4,5 +4,6 @@ public enum AssignmentStatus {
     PENDING,
     ACCEPTED,
     REJECTED,
+    TIMED_OUT,
     CANCELLED
 }

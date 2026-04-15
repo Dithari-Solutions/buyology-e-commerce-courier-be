@@ -211,6 +211,13 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 Courier courier = courierMap.get(candidateId);
                 if (courier == null) continue; // not in DB filter result
 
+                // Skip couriers who already have a PENDING assignment they haven't responded to.
+                // This prevents the same courier from being assigned to multiple orders
+                // when several CREATED orders are processed in a single scan.
+                if (assignmentRepository.existsByCourierAndStatus(courier, AssignmentStatus.PENDING)) {
+                    continue;
+                }
+
                 double speed = courier.getVehicleType().speedKmh();
 
                 // We need the courier's latest known position; use a placeholder
@@ -270,6 +277,12 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 .assignedAt(Instant.now())
                 .build();
         assignment = assignmentRepository.save(assignment);
+
+        // Mark the courier as unavailable so concurrent scans don't double-assign them
+        // to another order while this PENDING assignment is still open.
+        selectedCourier.setAvailable(false);
+        courierRepository.save(selectedCourier);
+        courierGeoService.remove(selectedCourier.getId());
 
         // Update delivery order
         freshOrder.setAssignedCourier(selectedCourier);
@@ -396,6 +409,12 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         assignmentRepository.save(assignment);
 
         DeliveryOrder order = assignment.getDelivery();
+
+        // Courier rejected — restore their availability so they can receive future assignments.
+        // GEO index entry will be restored automatically on the courier's next location ping.
+        Courier rejector = assignment.getCourier();
+        rejector.setAvailable(true);
+        courierRepository.save(rejector);
 
         // Clear the current courier from the order entity so it's "unassigned"
         // while we wait for the next attempt or if we exhaust all attempts.
