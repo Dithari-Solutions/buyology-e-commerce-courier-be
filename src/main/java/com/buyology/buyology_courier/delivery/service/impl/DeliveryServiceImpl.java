@@ -284,6 +284,8 @@ public class DeliveryServiceImpl implements DeliveryService {
         notificationService.notifyCustomerDelivered(order);
         // Notify the courier (FCM push + email) that the delivery is complete
         notificationService.notifyCourierDelivered(order);
+        // Prompt the customer to rate the delivery and products
+        notificationService.notifyCustomerRatingRequest(order);
 
         log.info("[Delivery] Delivery proof submitted deliveryId={} courierId={}", deliveryId, courierId);
         return toProofResponse(proof);

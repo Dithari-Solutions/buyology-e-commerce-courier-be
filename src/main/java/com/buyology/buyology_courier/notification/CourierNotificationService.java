@@ -44,4 +44,19 @@ public interface CourierNotificationService {
      * No-op if no courier is assigned or the courier has no FCM token / email.
      */
     void notifyCourierCancelled(DeliveryOrder order, String reason);
+
+    /**
+     * Sends the customer an email informing them that a courier has been assigned
+     * to their order. Includes courier name, phone, and estimated delivery minutes.
+     * No-op if the delivery has no customer email address or email is disabled.
+     */
+    void notifyCustomerCourierAssigned(DeliveryOrder order, String courierName,
+                                       String courierPhone, int estimatedMinutes);
+
+    /**
+     * Sends the customer a post-delivery rating-request email with a deeplink
+     * to the in-app rating screen. Fired after submitDeliveryProof succeeds.
+     * No-op if the delivery has no customer email address or email is disabled.
+     */
+    void notifyCustomerRatingRequest(DeliveryOrder order);
 }

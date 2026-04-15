@@ -404,6 +404,103 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
         );
     }
 
+    // ── Customer courier-assigned & rating-request emails ────────────────────
+
+    @Override
+    @Async("eventPublisherExecutor")
+    public void notifyCustomerCourierAssigned(DeliveryOrder order, String courierName,
+                                              String courierPhone, int estimatedMinutes) {
+        if (!emailEnabled) return;
+        if (order.getCustomerEmail() == null || order.getCustomerEmail().isBlank()) {
+            log.debug("[Notification] No customer email on deliveryId={} — skipping courier-assigned email",
+                    order.getId());
+            return;
+        }
+        sendCustomerEmail(
+                order.getCustomerEmail(),
+                order.getCustomerName(),
+                "Your courier has been assigned — Buyology",
+                buildCourierAssignedEmailBody(order, courierName, courierPhone, estimatedMinutes)
+        );
+    }
+
+    @Override
+    @Async("eventPublisherExecutor")
+    public void notifyCustomerRatingRequest(DeliveryOrder order) {
+        if (!emailEnabled) return;
+        if (order.getCustomerEmail() == null || order.getCustomerEmail().isBlank()) {
+            log.debug("[Notification] No customer email on deliveryId={} — skipping rating-request email",
+                    order.getId());
+            return;
+        }
+        sendCustomerEmail(
+                order.getCustomerEmail(),
+                order.getCustomerName(),
+                "How was your delivery? Rate your experience — Buyology",
+                buildRatingRequestEmailBody(order)
+        );
+    }
+
+    private String buildCourierAssignedEmailBody(DeliveryOrder order, String courierName,
+                                                  String courierPhone, int estimatedMinutes) {
+        return """
+                <html><body style="font-family:Arial,sans-serif;color:#333">
+                <h2 style="color:#1565c0">Your courier has been assigned!</h2>
+                <p>Hi %s,</p>
+                <p>Great news — a courier is now heading to pick up your order and will deliver it to you.</p>
+                <table style="border-collapse:collapse;width:100%%">
+                  <tr><td style="padding:6px;font-weight:bold">Courier name</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr style="background:#f5f5f5">
+                      <td style="padding:6px;font-weight:bold">Courier phone</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr><td style="padding:6px;font-weight:bold">Estimated delivery</td>
+                      <td style="padding:6px">~%d minutes</td></tr>
+                  <tr style="background:#f5f5f5">
+                      <td style="padding:6px;font-weight:bold">Delivery address</td>
+                      <td style="padding:6px">%s</td></tr>
+                  <tr><td style="padding:6px;font-weight:bold">Order reference</td>
+                      <td style="padding:6px;font-size:12px;color:#888">%s</td></tr>
+                </table>
+                <p>You can track the courier in real-time in the Buyology app.</p>
+                <p style="margin-top:24px;font-size:12px;color:#aaa">
+                  This is an automated message from Buyology. Do not reply.
+                </p>
+                </body></html>
+                """.formatted(
+                order.getCustomerName(),
+                courierName,
+                courierPhone,
+                estimatedMinutes,
+                order.getDropoffAddress(),
+                order.getEcommerceOrderId()
+        );
+    }
+
+    private String buildRatingRequestEmailBody(DeliveryOrder order) {
+        return """
+                <html><body style="font-family:Arial,sans-serif;color:#333">
+                <h2 style="color:#e65c00">How was your delivery?</h2>
+                <p>Hi %s,</p>
+                <p>Your order has been delivered! We'd love to hear about your experience.</p>
+                <p>Please take a moment to rate your delivery and the products you received.</p>
+                <table style="border-collapse:collapse;width:100%%">
+                  <tr><td style="padding:6px;font-weight:bold">Order reference</td>
+                      <td style="padding:6px;font-size:12px;color:#888">%s</td></tr>
+                </table>
+                <p style="margin-top:20px">
+                  Open the Buyology app and go to <strong>My Orders</strong> to leave your rating.
+                </p>
+                <p style="margin-top:24px;font-size:12px;color:#aaa">
+                  This is an automated message from Buyology. Do not reply.
+                </p>
+                </body></html>
+                """.formatted(
+                order.getCustomerName(),
+                order.getEcommerceOrderId()
+        );
+    }
+
     // ── Courier assignment email ───────────────────────────────────────────────
 
     private String buildEmailBody(Courier courier, CourierAssignment assignment, DeliveryOrder order) {

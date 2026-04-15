@@ -258,6 +258,15 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         // Triggered async AFTER this transaction commits via CourierAssignedApplicationEvent.
         eventPublisher.publishEvent(CourierAssignedApplicationEvent.of(selectedCourier, assignment, freshOrder));
 
+        // Notify the customer via email that their courier has been assigned.
+        // Runs on eventPublisherExecutor — never blocks this transaction.
+        final int finalEstimatedMinutes = (int) Math.ceil(estimatedMinutes);
+        final String courierFullName = selectedCourier.getFirstName() + " " + selectedCourier.getLastName();
+        final String courierPhone = selectedCourier.getPhone();
+        final DeliveryOrder orderForNotification = freshOrder;
+        notificationService.notifyCustomerCourierAssigned(
+                orderForNotification, courierFullName, courierPhone, finalEstimatedMinutes);
+
         log.info("[Assignment] Assigned courierId={} to deliveryId={} attempt={}",
                 selectedCourier.getId(), freshOrder.getId(), attemptNumber);
     }

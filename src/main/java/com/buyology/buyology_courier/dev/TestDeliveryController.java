@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.transaction.annotation.Transactional;
@@ -46,6 +47,7 @@ import java.util.UUID;
  * </ol>
  */
 @RestController
+@Profile("dev")
 @RequiredArgsConstructor
 @Slf4j
 @Tag(name = "Dev — Test orders", description = "DEV ONLY. Inject delivery orders without ecommerce/payment.")

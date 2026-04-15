@@ -12,18 +12,20 @@ import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerCo
 /**
  * STOMP/WebSocket broker configuration.
  *
- * <p>Courier mobile apps connect to {@code /ws} and subscribe to their
- * personal queue {@code /user/{courierId}/queue/assignments}.
- * The server pushes a new-assignment notification to that queue the moment
- * a courier is selected, so the app shows "New order available" without polling.
+ * <p>Courier mobile apps connect to {@code /ws} and subscribe to:
+ * <ul>
+ *   <li>{@code /user/queue/assignments} — new delivery assignment notifications</li>
+ *   <li>{@code /user/queue/chat/{deliveryOrderId}} — real-time chat with the customer</li>
+ * </ul>
  *
  * <h3>Connection flow</h3>
  * <ol>
  *   <li>Client opens WebSocket to {@code ws://<host>/ws}</li>
  *   <li>Client sends STOMP CONNECT with header {@code Authorization: Bearer <courier-jwt>}</li>
  *   <li>{@link WebSocketAuthChannelInterceptor} validates the JWT and sets the Principal</li>
- *   <li>Client subscribes to {@code /user/queue/assignments}</li>
- *   <li>Server calls {@code SimpMessagingTemplate.convertAndSendToUser(courierId, "/queue/assignments", payload)}</li>
+ *   <li>Client subscribes to {@code /user/queue/assignments} and
+ *       {@code /user/queue/chat/{deliveryOrderId}} after accepting a delivery</li>
+ *   <li>Client sends chat messages to {@code /app/chat/{deliveryOrderId}/send}</li>
  * </ol>
  */
 @Configuration
