@@ -496,7 +496,7 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
     @Transactional(readOnly = true)
     public Optional<AssignmentResponse> getPendingAssignment(UUID courierId) {
         return assignmentRepository
-                .findByCourierIdAndStatus(courierId, AssignmentStatus.PENDING)
+                .findFirstByCourierIdAndStatusOrderByAssignedAtDesc(courierId, AssignmentStatus.PENDING)
                 .map(this::toResponse);
     }
 

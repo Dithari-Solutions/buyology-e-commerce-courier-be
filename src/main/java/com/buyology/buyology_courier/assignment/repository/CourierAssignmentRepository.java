@@ -38,5 +38,5 @@ public interface CourierAssignmentRepository extends JpaRepository<CourierAssign
      * The current assignment for a courier in a given status.
      * Used by the polling endpoint so the app can recover a missed push on startup/reconnect.
      */
-    Optional<CourierAssignment> findByCourierIdAndStatus(UUID courierId, AssignmentStatus status);
+    Optional<CourierAssignment> findFirstByCourierIdAndStatusOrderByAssignedAtDesc(UUID courierId, AssignmentStatus status);
 }
