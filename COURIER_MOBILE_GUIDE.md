@@ -159,6 +159,46 @@ CREATED ──(system assigns)──► COURIER_ASSIGNED
 
 The backend sends assignment offers through **two parallel channels**. The app must handle both.
 
+> **Critical — poll on every startup and reconnect.**
+> WebSocket pushes are fire-and-forget. If the device was offline when an offer arrived, the push is lost.
+> Call `GET /api/v1/assignments/my-pending` (see below) immediately after login, after every WebSocket reconnect, and when the app resumes from background. If it returns a pending assignment, show the offer screen exactly as you would for a WebSocket push.
+
+### 5.0 Poll for Missed Assignment
+
+**GET** `/api/v1/assignments/my-pending`
+
+**Response 200** — a pending assignment exists:
+
+```json
+{
+  "assignmentId":    "3fa85f64-...",
+  "deliveryId":      "7c9e6679-...",
+  "courierId":       "a1b2c3d4-...",
+  "status":          "PENDING",
+  "attemptNumber":   1,
+  "assignedAt":      "2026-04-12T10:00:00Z",
+  "acceptedAt":      null,
+  "rejectedAt":      null,
+  "rejectionReason": null,
+  "createdAt":       "2026-04-12T10:00:00Z",
+  "pickupAddress":   "123 Store Street, Tashkent",
+  "pickupLat":       41.2995,
+  "pickupLng":       69.2401,
+  "dropoffAddress":  "456 Customer Ave, Tashkent",
+  "dropoffLat":      41.3111,
+  "dropoffLng":      69.2650
+}
+```
+
+**Response 204 No Content** — no pending assignment right now.
+
+**When to call:**
+1. After a successful login
+2. Immediately after WebSocket CONNECT frame is acknowledged
+3. After the app returns to foreground (`onResume` / `applicationDidBecomeActive`)
+
+**Recommended polling interval while connected:** none — rely on WebSocket push. Only poll at the three points above.
+
 ### 5.1 WebSocket / STOMP
 
 Connect when the app is in the foreground or background (keep-alive recommended).
@@ -761,9 +801,10 @@ App Launch
   ├─ POST /api/auth/courier/login
   ├─ POST /api/v1/couriers/push-token  (register FCM token)
   ├─ PATCH /api/v1/couriers/{id}/availability  { available: true }
-  └─ Connect WebSocket ws://<host>/ws, subscribe /user/queue/assignments
-         │
-         │   ◄── WS push or FCM: new assignment offer
+  ├─ Connect WebSocket ws://<host>/ws, subscribe /user/queue/assignments
+  └─ GET /api/v1/assignments/my-pending  ← poll immediately after connect
+         │                                 (catches offers missed while offline)
+         │   ◄── WS push or FCM: new assignment offer (ongoing)
          │
   POST /api/v1/assignments/{assignmentId}/respond  { action: "ACCEPT" }
          │

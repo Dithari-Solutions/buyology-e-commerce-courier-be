@@ -7,6 +7,7 @@ import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApp
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
 
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -51,4 +52,11 @@ public interface CourierAssignmentService {
      * orders that found no courier on first try.
      */
     void attemptAssignment(DeliveryOrder order, int attemptNumber, Set<UUID> excludedCourierIds);
+
+    /**
+     * Returns the courier's current PENDING assignment, if any.
+     * Called by the app on startup and after WebSocket reconnect to recover any
+     * assignment offer that was sent while the app was offline or disconnected.
+     */
+    Optional<AssignmentResponse> getPendingAssignment(UUID courierId);
 }

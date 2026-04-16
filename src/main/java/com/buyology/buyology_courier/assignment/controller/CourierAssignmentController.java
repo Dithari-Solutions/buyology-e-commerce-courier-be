@@ -31,6 +31,24 @@ public class CourierAssignmentController {
     private final CourierAssignmentService courierAssignmentService;
 
     /**
+     * Returns the courier's current PENDING assignment, or 204 No Content if there is none.
+     *
+     * <p>The app must call this on every startup and immediately after re-establishing
+     * the WebSocket connection. This recovers any assignment offer that was sent via
+     * WebSocket/FCM while the device was offline or the connection was dropped — without
+     * this, a courier would never see orders that timed out while they were reconnecting.
+     */
+    @GetMapping("/my-pending")
+    @PreAuthorize("hasRole('COURIER')")
+    @Operation(summary = "Poll for a pending assignment — call on app start and after WebSocket reconnect")
+    public ResponseEntity<AssignmentResponse> getMyPendingAssignment(Authentication authentication) {
+        UUID courierId = UUID.fromString(authentication.getName());
+        return courierAssignmentService.getPendingAssignment(courierId)
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.noContent().build());
+    }
+
+    /**
      * Returns assignment details including the embedded pickup/dropoff addresses.
      * The courier app calls this when notified of a new assignment (push or poll).
      */

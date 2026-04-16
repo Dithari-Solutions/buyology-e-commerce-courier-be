@@ -3,8 +3,10 @@ package com.buyology.buyology_courier.assignment.job;
 import com.buyology.buyology_courier.assignment.domain.CourierAssignment;
 import com.buyology.buyology_courier.assignment.domain.enums.AssignmentStatus;
 import com.buyology.buyology_courier.assignment.repository.CourierAssignmentRepository;
+import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.assignment.service.event.ReassignApplicationEvent;
 import com.buyology.buyology_courier.courier.domain.Courier;
+import com.buyology.buyology_courier.courier.repository.CourierLocationRepository;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
 import com.buyology.buyology_courier.delivery.domain.DeliveryStatusHistory;
@@ -47,11 +49,13 @@ public class PendingAssignmentTimeoutJob {
     /** How long a courier has to accept/reject before the assignment is expired. */
     private static final int TIMEOUT_MINUTES = 2;
 
-    private final CourierAssignmentRepository  assignmentRepository;
-    private final DeliveryOrderRepository      deliveryOrderRepository;
+    private final CourierAssignmentRepository     assignmentRepository;
+    private final DeliveryOrderRepository         deliveryOrderRepository;
     private final DeliveryStatusHistoryRepository statusHistoryRepository;
-    private final CourierRepository            courierRepository;
-    private final ApplicationEventPublisher    eventPublisher;
+    private final CourierRepository               courierRepository;
+    private final CourierLocationRepository       locationRepository;
+    private final CourierGeoService               courierGeoService;
+    private final ApplicationEventPublisher       eventPublisher;
 
     @Scheduled(fixedDelayString = "${assignment.timeout-check-interval-ms:30000}")
     @Transactional
@@ -96,10 +100,25 @@ public class PendingAssignmentTimeoutJob {
         assignment.setRejectionReason("Courier did not respond within " + TIMEOUT_MINUTES + " minutes");
         assignmentRepository.save(assignment);
 
-        // 2. Restore courier availability — GEO index is refreshed on next location ping
+        // 2. Restore courier availability and GEO index so they are immediately eligible
+        //    for reassignment without having to wait for their next location ping.
         Courier courier = assignment.getCourier();
         courier.setAvailable(true);
         courierRepository.save(courier);
+
+        locationRepository.findFirstByCourierIdOrderByRecordedAtDesc(courier.getId())
+                .ifPresentOrElse(
+                        loc -> {
+                            courierGeoService.addOrUpdate(
+                                    courier.getId(),
+                                    loc.getLatitude().doubleValue(),
+                                    loc.getLongitude().doubleValue());
+                            log.info("[TimeoutJob] Restored GEO index for courierId={} using last known location",
+                                    courier.getId());
+                        },
+                        () -> log.warn("[TimeoutJob] No location history for courierId={} — " +
+                                "courier will re-enter GEO index on next location ping", courier.getId())
+                );
 
         // 3. Revert order to CREATED so it re-enters the assignment pool
         order.setAssignedCourier(null);

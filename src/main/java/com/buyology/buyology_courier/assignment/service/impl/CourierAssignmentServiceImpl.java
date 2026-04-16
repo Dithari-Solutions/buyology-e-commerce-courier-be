@@ -51,6 +51,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -482,6 +483,21 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         }
 
         return toResponse(assignment);
+    }
+
+    // ── Pending poll ──────────────────────────────────────────────────────────
+
+    /**
+     * Returns the courier's current PENDING assignment, or empty if none.
+     * The app calls this on startup and after WebSocket reconnect so it can recover
+     * any offer that was pushed while the device was offline or the connection dropped.
+     */
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<AssignmentResponse> getPendingAssignment(UUID courierId) {
+        return assignmentRepository
+                .findByCourierIdAndStatus(courierId, AssignmentStatus.PENDING)
+                .map(this::toResponse);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

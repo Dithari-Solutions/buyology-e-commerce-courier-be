@@ -187,6 +187,7 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
                             .setBody(body)
                             .build())
                     // Data fields — app reads these to route to the accept/reject screen
+                    .putData("type",          "NEW_ASSIGNMENT")
                     .putData("assignmentId",  assignment.getId().toString())
                     .putData("deliveryId",    order.getId().toString())
                     .putData("pickupAddress", order.getPickupAddress())

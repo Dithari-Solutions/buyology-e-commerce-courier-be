@@ -33,4 +33,10 @@ public interface CourierAssignmentRepository extends JpaRepository<CourierAssign
      * expire unresponsive courier assignments and revert the order to CREATED.
      */
     List<CourierAssignment> findByStatusAndAssignedAtBefore(AssignmentStatus status, Instant cutoff);
+
+    /**
+     * The current assignment for a courier in a given status.
+     * Used by the polling endpoint so the app can recover a missed push on startup/reconnect.
+     */
+    Optional<CourierAssignment> findByCourierIdAndStatus(UUID courierId, AssignmentStatus status);
 }
