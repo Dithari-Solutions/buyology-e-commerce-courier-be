@@ -7,10 +7,10 @@ import org.springframework.web.multipart.MultipartFile;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
-import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -42,7 +42,8 @@ public class ContaboObjectService {
             s3Client.putObject(request, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
             log.info("[S3] Uploaded key={}", key);
             return key;
-        } catch (IOException ex) {
+        } catch (IOException | RuntimeException ex) {
+            log.error("[S3] Upload failed key={} error={}", key, ex.getMessage(), ex);
             throw new FileStorageException("Failed to upload file to object storage: " + key, ex);
         }
     }
