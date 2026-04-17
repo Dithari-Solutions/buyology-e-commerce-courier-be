@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -46,6 +47,7 @@ import java.util.UUID;
 @RestController
 @RequestMapping("/api/v1/deliveries")
 @RequiredArgsConstructor
+@Slf4j
 @Tag(name = "Deliveries", description = "Delivery order lifecycle management")
 public class DeliveryController {
 
@@ -153,6 +155,8 @@ public class DeliveryController {
             Authentication authentication
     ) {
         UUID courierId = UUID.fromString(authentication.getName());
+        log.info("[ProofUpload] pickup-proof deliveryId={} courierId={} contentType={} sizeBytes={}",
+                id, courierId, photo.getContentType(), photo.getSize());
         String imageUrl = fileStorageService.store(photo, "pickup-proof");
         return deliveryService.submitPickupProof(id, courierId, imageUrl, photoTakenAt);
     }
@@ -179,6 +183,8 @@ public class DeliveryController {
             Authentication authentication
     ) {
         UUID courierId = UUID.fromString(authentication.getName());
+        log.info("[ProofUpload] deliver-proof deliveryId={} courierId={} contentType={} sizeBytes={}",
+                id, courierId, photo.getContentType(), photo.getSize());
         String imageUrl = fileStorageService.store(photo, "delivery-proof");
         return deliveryService.submitDeliveryProof(id, courierId, imageUrl, deliveredTo, photoTakenAt);
     }

@@ -122,6 +122,13 @@
 			<version>3.0.2</version>
 		</dependency>
 
+		<!-- AWS S3 SDK — Contabo object storage for proof/profile images -->
+		<dependency>
+			<groupId>software.amazon.awssdk</groupId>
+			<artifactId>s3</artifactId>
+			<version>2.29.50</version>
+		</dependency>
+
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
 			<artifactId>spring-boot-devtools</artifactId>

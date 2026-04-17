@@ -1,26 +1,19 @@
 package com.buyology.buyology_courier.common.storage;
 
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.Set;
 import java.util.UUID;
 
 /**
- * Stores uploaded image files on the local filesystem.
- *
- * Files are written to {@code <uploadDir>/couriers/<subDir>/<uuid>.<ext>}
- * and exposed as {@code <baseUrl>/couriers/<subDir>/<uuid>.<ext>}.
- *
- * Allowed types: JPEG, PNG, WebP — no executables, no PDFs.
+ * Facade over Contabo object storage.
+ * Validates incoming files, builds S3 keys, and delegates to {@link ContaboObjectService}.
  */
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class FileStorageService {
 
@@ -29,44 +22,33 @@ public class FileStorageService {
     );
     private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-    private final Path   uploadRoot;
-    private final String baseUrl;
-
-    public FileStorageService(FileStorageProperties props) {
-        this.uploadRoot = Paths.get(props.uploadDir()).toAbsolutePath().normalize();
-        this.baseUrl    = props.baseUrl();
-        try {
-            Files.createDirectories(this.uploadRoot);
-        } catch (IOException ex) {
-            throw new IllegalStateException("Cannot create upload directory: " + uploadRoot, ex);
-        }
-    }
+    private final ContaboObjectService contaboObjectService;
 
     /**
-     * Store a multipart file under {@code couriers/<subDir>/} and return its public URL.
+     * Validates and stores a file under {@code couriers/<subDir>/<uuid>.<ext>}.
      *
-     * @param file   the uploaded file — must be a non-empty image
-     * @param subDir sub-directory name, e.g. {@code "profile"} or {@code "licence"}
-     * @return public URL path to the stored file, e.g. {@code /uploads/couriers/profile/abc.jpg}
+     * @return S3 object key (stored in DB — convert to presigned URL before returning to clients)
      */
     public String store(MultipartFile file, String subDir) {
         validate(file);
-
         String extension = resolveExtension(file.getContentType());
-        String filename  = UUID.randomUUID() + "." + extension;
-        Path   dir       = uploadRoot.resolve("couriers").resolve(subDir);
-        Path   target    = dir.resolve(filename);
+        String key = "couriers/" + subDir + "/" + UUID.randomUUID() + "." + extension;
+        return contaboObjectService.uploadFile(key, file);
+    }
 
-        try {
-            Files.createDirectories(dir);
-            Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
-        } catch (IOException ex) {
-            throw new FileStorageException("Failed to store file: " + filename, ex);
-        }
+    /**
+     * Generates a presigned URL for the given S3 key (valid 2 hours).
+     * Returns {@code null} if the key is null or blank.
+     */
+    public String getPresignedUrl(String key) {
+        return contaboObjectService.getPresignedUrl(key);
+    }
 
-        String url = baseUrl + "/couriers/" + subDir + "/" + filename;
-        log.info("Stored file: path={}, url={}", target, url);
-        return url;
+    /**
+     * Deletes the object at the given S3 key. No-op if key is null.
+     */
+    public void delete(String key) {
+        contaboObjectService.deleteFile(key);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

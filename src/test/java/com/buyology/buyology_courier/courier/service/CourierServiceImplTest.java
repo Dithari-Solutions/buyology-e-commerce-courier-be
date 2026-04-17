@@ -19,6 +19,7 @@ import com.buyology.buyology_courier.courier.messaging.config.RabbitMQConfig;
 import com.buyology.buyology_courier.courier.repository.CourierLocationRepository;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.service.impl.CourierServiceImpl;
+import com.buyology.buyology_courier.common.storage.FileStorageService;
 import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -55,6 +56,7 @@ class CourierServiceImplTest {
     @Mock ApplicationEventPublisher eventPublisher;
     @Mock StringRedisTemplate stringRedisTemplate;
     @Mock ValueOperations<String, String> valueOps;
+    @Mock FileStorageService fileStorageService;
 
     private MeterRegistry meterRegistry;
     private CourierServiceImpl service;
@@ -72,7 +74,8 @@ class CourierServiceImplTest {
                 eventPublisher,
                 new ObjectMapper().findAndRegisterModules(),
                 meterRegistry,
-                stringRedisTemplate
+                stringRedisTemplate,
+                fileStorageService
         );
 
     }

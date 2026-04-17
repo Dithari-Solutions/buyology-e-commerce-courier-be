@@ -2,8 +2,10 @@ package com.buyology.buyology_courier.common.exception;
 
 import com.buyology.buyology_courier.assignment.exception.AssignmentAlreadyRespondedException;
 import com.buyology.buyology_courier.assignment.exception.AssignmentNotFoundException;
+import com.buyology.buyology_courier.assignment.exception.CourierHasActiveDeliveryException;
 import com.buyology.buyology_courier.assignment.exception.NoCourierAvailableException;
 import com.buyology.buyology_courier.auth.exception.AccountLockedException;
+import com.buyology.buyology_courier.common.storage.FileStorageException;
 import com.buyology.buyology_courier.auth.exception.AccountNotActiveException;
 import com.buyology.buyology_courier.auth.exception.AccountSuspendedException;
 import com.buyology.buyology_courier.auth.exception.DrivingLicenseRequiredException;
@@ -28,6 +30,8 @@ import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -61,6 +65,12 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AssignmentAlreadyRespondedException.class)
     public ResponseEntity<ErrorResponse> handleAssignmentAlreadyResponded(
             AssignmentAlreadyRespondedException ex, HttpServletRequest req) {
+        return response(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(CourierHasActiveDeliveryException.class)
+    public ResponseEntity<ErrorResponse> handleCourierHasActiveDelivery(
+            CourierHasActiveDeliveryException ex, HttpServletRequest req) {
         return response(HttpStatus.CONFLICT, "Conflict", ex.getMessage(), req);
     }
 
@@ -221,6 +231,31 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleAccessDenied(
             AccessDeniedException ex, HttpServletRequest req) {
         return response(HttpStatus.FORBIDDEN, "Forbidden", "You do not have permission to perform this action.", req);
+    }
+
+    // ── File upload ───────────────────────────────────────────────────────────
+
+    @ExceptionHandler(FileStorageException.class)
+    public ResponseEntity<ErrorResponse> handleFileStorage(
+            FileStorageException ex, HttpServletRequest req) {
+        log.error("[FileStorage] Upload failed on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return response(HttpStatus.BAD_REQUEST, "Bad Request", ex.getMessage(), req);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ErrorResponse> handleMaxUploadSize(
+            MaxUploadSizeExceededException ex, HttpServletRequest req) {
+        log.error("[FileStorage] Upload too large on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return response(HttpStatus.valueOf(413), "Payload Too Large",
+                "File size exceeds the maximum allowed limit.", req);
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    public ResponseEntity<ErrorResponse> handleMissingPart(
+            MissingServletRequestPartException ex, HttpServletRequest req) {
+        log.error("[FileStorage] Missing request part on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
+        return response(HttpStatus.BAD_REQUEST, "Bad Request",
+                "Required request part '" + ex.getRequestPartName() + "' is missing.", req);
     }
 
     // ── 500 Fallback ──────────────────────────────────────────────────────────

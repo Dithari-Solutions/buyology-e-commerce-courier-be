@@ -7,6 +7,7 @@ import com.buyology.buyology_courier.assignment.dto.request.AssignmentRespondReq
 import com.buyology.buyology_courier.assignment.dto.response.AssignmentResponse;
 import com.buyology.buyology_courier.assignment.exception.AssignmentAlreadyRespondedException;
 import com.buyology.buyology_courier.assignment.exception.AssignmentNotFoundException;
+import com.buyology.buyology_courier.assignment.exception.CourierHasActiveDeliveryException;
 import com.buyology.buyology_courier.assignment.messaging.event.AssignmentExhaustedEvent;
 import com.buyology.buyology_courier.assignment.messaging.event.CourierAssignedEvent;
 import com.buyology.buyology_courier.assignment.messaging.event.CourierAssignmentAcceptedEvent;
@@ -63,6 +64,15 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
     /** Max assignment retries per delivery before giving up and alerting admins. */
     private static final int MAX_ASSIGNMENT_ATTEMPTS = 3;
+
+    private static final java.util.Set<DeliveryStatus> ACTIVE_DELIVERY_STATUSES =
+            java.util.Set.of(
+                    DeliveryStatus.COURIER_ACCEPTED,
+                    DeliveryStatus.ARRIVED_AT_PICKUP,
+                    DeliveryStatus.PICKED_UP,
+                    DeliveryStatus.ON_THE_WAY,
+                    DeliveryStatus.ARRIVED_AT_DESTINATION
+            );
 
     /**
      * Grace period in seconds — skip orders younger than this when scanning on
@@ -212,10 +222,12 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 Courier courier = courierMap.get(candidateId);
                 if (courier == null) continue; // not in DB filter result
 
-                // Skip couriers who already have a PENDING assignment they haven't responded to.
-                // This prevents the same courier from being assigned to multiple orders
-                // when several CREATED orders are processed in a single scan.
+                // Skip couriers who already have a PENDING assignment or an active delivery.
                 if (assignmentRepository.existsByCourierAndStatus(courier, AssignmentStatus.PENDING)) {
+                    continue;
+                }
+                if (deliveryOrderRepository.findFirstByAssignedCourierIdAndStatusIn(
+                        courier.getId(), ACTIVE_DELIVERY_STATUSES).isPresent()) {
                     continue;
                 }
 
@@ -371,6 +383,12 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
     }
 
     private AssignmentResponse handleAccept(CourierAssignment assignment) {
+        UUID courierId = assignment.getCourier().getId();
+        if (deliveryOrderRepository.findFirstByAssignedCourierIdAndStatusIn(
+                courierId, ACTIVE_DELIVERY_STATUSES).isPresent()) {
+            throw new CourierHasActiveDeliveryException(courierId);
+        }
+
         assignment.setStatus(AssignmentStatus.ACCEPTED);
         assignment.setAcceptedAt(Instant.now());
         assignmentRepository.save(assignment);

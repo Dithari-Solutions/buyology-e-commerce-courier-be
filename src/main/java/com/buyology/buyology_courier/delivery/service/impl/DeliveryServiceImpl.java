@@ -20,6 +20,7 @@ import com.buyology.buyology_courier.delivery.repository.DeliveryOrderRepository
 import com.buyology.buyology_courier.delivery.repository.DeliveryProofRepository;
 import com.buyology.buyology_courier.delivery.repository.DeliveryStatusHistoryRepository;
 import com.buyology.buyology_courier.assignment.service.event.DeliveryCreatedApplicationEvent;
+import com.buyology.buyology_courier.common.storage.FileStorageService;
 import com.buyology.buyology_courier.delivery.service.DeliveryService;
 import com.buyology.buyology_courier.notification.CourierNotificationService;
 import com.fasterxml.jackson.core.JsonProcessingException;
@@ -63,6 +64,7 @@ public class DeliveryServiceImpl implements DeliveryService {
     private final ApplicationEventPublisher       eventPublisher;
     private final CourierNotificationService      notificationService;
     private final ObjectMapper                    objectMapper;
+    private final FileStorageService              fileStorageService;
 
     // ── Ingest ────────────────────────────────────────────────────────────────
 
@@ -485,10 +487,10 @@ public class DeliveryServiceImpl implements DeliveryService {
         return new DeliveryProofResponse(
                 p.getId(),
                 p.getDelivery().getId(),
-                p.getPickupImageUrl(),
+                fileStorageService.getPresignedUrl(p.getPickupImageUrl()),
                 p.getPickupPhotoTakenAt(),
-                p.getImageUrl(),
-                p.getSignatureUrl(),
+                fileStorageService.getPresignedUrl(p.getImageUrl()),
+                fileStorageService.getPresignedUrl(p.getSignatureUrl()),
                 p.getDeliveredTo(),
                 p.getPhotoTakenAt(),
                 p.getCreatedAt()

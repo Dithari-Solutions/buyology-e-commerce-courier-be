@@ -23,6 +23,7 @@ import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.courier.repository.spec.CourierSpecification;
 import com.buyology.buyology_courier.assignment.service.CourierGeoService;
 import com.buyology.buyology_courier.assignment.service.event.CourierBecameAvailableApplicationEvent;
+import com.buyology.buyology_courier.common.storage.FileStorageService;
 import com.buyology.buyology_courier.courier.service.CourierLookupService;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import com.buyology.buyology_courier.delivery.domain.enums.DeliveryStatus;
@@ -75,6 +76,7 @@ public class CourierServiceImpl implements CourierService {
     private final ObjectMapper              objectMapper;
     private final MeterRegistry             meterRegistry;
     private final StringRedisTemplate       stringRedisTemplate;
+    private final FileStorageService        fileStorageService;
 
     // ── Courier CRUD ──────────────────────────────────────────────────────────
 
@@ -113,12 +115,12 @@ public class CourierServiceImpl implements CourierService {
         );
 
         meterRegistry.counter("courier.registrations.total").increment();
-        return CourierMapper.toResponse(saved);
+        return withPresignedUrls(CourierMapper.toResponse(saved));
     }
 
     @Override
     public CourierResponse findById(UUID id) {
-        return CourierMapper.toResponse(getOrThrow(id));
+        return withPresignedUrls(CourierMapper.toResponse(getOrThrow(id)));
     }
 
     @Override
@@ -146,7 +148,7 @@ public class CourierServiceImpl implements CourierService {
 
         Courier saved = courierRepository.save(courier);
         courierLookupService.evict(id);
-        return CourierMapper.toResponse(saved);
+        return withPresignedUrls(CourierMapper.toResponse(saved));
     }
 
     @Override
@@ -176,7 +178,7 @@ public class CourierServiceImpl implements CourierService {
         );
 
         meterRegistry.counter("courier.status.changes.total").increment();
-        return CourierMapper.toResponse(saved);
+        return withPresignedUrls(CourierMapper.toResponse(saved));
     }
 
     @Override
@@ -209,7 +211,7 @@ public class CourierServiceImpl implements CourierService {
             eventPublisher.publishEvent(new CourierBecameAvailableApplicationEvent(id));
         }
 
-        return CourierMapper.toResponse(saved);
+        return withPresignedUrls(CourierMapper.toResponse(saved));
     }
 
     @Override
@@ -408,5 +410,15 @@ public class CourierServiceImpl implements CourierService {
             meterRegistry.counter("courier.events.publish_failures.total").increment();
             throw new RuntimeException("Failed to serialise outbox event for routing key: " + routingKey, ex);
         }
+    }
+
+    private CourierResponse withPresignedUrls(CourierResponse r) {
+        return new CourierResponse(
+                r.id(), r.firstName(), r.lastName(), r.phone(), r.email(),
+                r.vehicleType(), r.status(), r.isAvailable(), r.rating(),
+                fileStorageService.getPresignedUrl(r.profileImageUrl()),
+                fileStorageService.getPresignedUrl(r.drivingLicenceImageUrl()),
+                r.createdAt(), r.updatedAt()
+        );
     }
 }

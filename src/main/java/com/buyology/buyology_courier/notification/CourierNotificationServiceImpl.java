@@ -3,10 +3,12 @@ package com.buyology.buyology_courier.notification;
 import com.buyology.buyology_courier.assignment.domain.CourierAssignment;
 import com.buyology.buyology_courier.config.TwilioSendGridProperties;
 import com.buyology.buyology_courier.courier.domain.Courier;
+import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
 import com.google.firebase.messaging.FirebaseMessaging;
 import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
+import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.Notification;
 import com.sendgrid.Method;
 import com.sendgrid.Request;
@@ -45,6 +47,7 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
 
     private final SimpMessagingTemplate     messagingTemplate;
     private final TwilioSendGridProperties  sendGridProps;
+    private final CourierRepository         courierRepository;
 
     /** Null when {@code firebase.enabled=false} — FCM pushes are skipped gracefully. */
     @Autowired(required = false)
@@ -201,9 +204,12 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
                     courier.getId(), assignment.getId(), messageId);
 
         } catch (FirebaseMessagingException ex) {
-            // Non-fatal — WebSocket is the primary real-time channel; FCM is a fallback
             log.warn("[Notification] FCM push failed courierId={} assignmentId={} — {} {}",
                     courier.getId(), assignment.getId(), ex.getErrorCode(), ex.getMessage());
+            if (ex.getMessagingErrorCode() == MessagingErrorCode.INVALID_ARGUMENT
+                    || ex.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
+                clearFcmToken(courier);
+            }
         }
     }
 
@@ -340,7 +346,17 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
         } catch (FirebaseMessagingException ex) {
             log.warn("[Notification] FCM push failed courierId={} — {} {}", courier.getId(),
                     ex.getErrorCode(), ex.getMessage());
+            if (ex.getMessagingErrorCode() == MessagingErrorCode.INVALID_ARGUMENT
+                    || ex.getMessagingErrorCode() == MessagingErrorCode.UNREGISTERED) {
+                clearFcmToken(courier);
+            }
         }
+    }
+
+    private void clearFcmToken(Courier courier) {
+        courier.setFcmToken(null);
+        courierRepository.save(courier);
+        log.info("[Notification] Cleared stale FCM token for courierId={}", courier.getId());
     }
 
     // ── Courier outcome emails ─────────────────────────────────────────────────
