@@ -78,8 +78,11 @@ services:
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-http://localhost:3000}
       FIREBASE_ENABLED: ${FIREBASE_ENABLED:-false}
       FIREBASE_SERVICE_ACCOUNT_JSON: ${FIREBASE_SERVICE_ACCOUNT_JSON:-}
-    volumes:
-      - courier_uploads:/app/uploads
+      CONTABO_S3_ENDPOINT: ${CONTABO_S3_ENDPOINT}
+      CONTABO_S3_ACCESS_KEY: ${CONTABO_S3_ACCESS_KEY}
+      CONTABO_S3_SECRET_KEY: ${CONTABO_S3_SECRET_KEY}
+      CONTABO_S3_BUCKET_NAME: ${CONTABO_S3_BUCKET_NAME}
+      CONTABO_S3_PUBLIC_URL: ${CONTABO_S3_PUBLIC_URL}
     ports:
       - "8081:8080"
     depends_on:
@@ -94,4 +97,3 @@ volumes:
   postgres_data:
   rabbitmq_data:
   redis_data:
-  courier_uploads:

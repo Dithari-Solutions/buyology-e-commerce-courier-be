@@ -23,7 +23,12 @@ public class ContaboConfig {
     }
 
     @Bean
-    public S3Client s3Client() {
+    S3Client s3Client() {
+        if (properties.endpoint() == null || properties.endpoint().startsWith("${")) {
+            throw new IllegalStateException(
+                    "CONTABO_S3_ENDPOINT environment variable is not set. " +
+                    "All CONTABO_S3_* variables are required for object storage.");
+        }
         return S3Client.builder()
                 .endpointOverride(URI.create(properties.endpoint()))
                 .credentialsProvider(StaticCredentialsProvider.create(
@@ -34,7 +39,7 @@ public class ContaboConfig {
     }
 
     @Bean
-    public S3Presigner s3Presigner() {
+    S3Presigner s3Presigner() {
         return S3Presigner.builder()
                 .endpointOverride(URI.create(properties.endpoint()))
                 .credentialsProvider(StaticCredentialsProvider.create(
