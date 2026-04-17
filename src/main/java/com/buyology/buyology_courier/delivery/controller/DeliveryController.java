@@ -119,7 +119,7 @@ public class DeliveryController {
 
     // ── Courier mutations ─────────────────────────────────────────────────────
 
-    @PatchMapping("/{id}/status")
+    @RequestMapping(value = "/{id}/status", method = {RequestMethod.PATCH, RequestMethod.POST})
     @PreAuthorize("hasRole('COURIER')")
     @Operation(summary = "Update delivery status — use for transitions that don't require photo evidence "
             + "(e.g. COURIER_ACCEPTED → ARRIVED_AT_PICKUP, PICKED_UP → ON_THE_WAY, ON_THE_WAY → ARRIVED_AT_DESTINATION). "
