@@ -100,6 +100,7 @@ public class SecurityConfig {
                             ));
                         })
                         .accessDeniedHandler((request, response, ex) -> {
+                            log.warn("[JWT-AUTH] 403 on {} {} — {}", request.getMethod(), request.getRequestURI(), ex.getMessage());
                             response.setStatus(403);
                             response.setContentType(MediaType.APPLICATION_JSON_VALUE);
                             response.getWriter().write(objectMapper.writeValueAsString(

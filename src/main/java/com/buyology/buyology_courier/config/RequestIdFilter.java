@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.extern.slf4j.Slf4j;
 import org.slf4j.MDC;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -21,6 +22,7 @@ import java.util.UUID;
  * Pairs with the traceId/spanId already injected by Micrometer Tracing — together
  * they give complete end-to-end correlation from the client's perspective.
  */
+@Slf4j
 @Component
 public class RequestIdFilter extends OncePerRequestFilter {
 
@@ -38,6 +40,8 @@ public class RequestIdFilter extends OncePerRequestFilter {
 
         MDC.put(MDC_KEY, requestId);
         response.setHeader(REQUEST_ID_HEADER, requestId);
+
+        log.debug("[REQUEST] {} {} requestId={}", request.getMethod(), request.getRequestURI(), requestId);
 
         try {
             filterChain.doFilter(request, response);

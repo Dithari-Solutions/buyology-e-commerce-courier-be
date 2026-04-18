@@ -230,6 +230,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ErrorResponse> handleAccessDenied(
             AccessDeniedException ex, HttpServletRequest req) {
+        log.warn("[AUTH] 403 Forbidden on {} {}: {}", req.getMethod(), req.getRequestURI(), ex.getMessage());
         return response(HttpStatus.FORBIDDEN, "Forbidden", "You do not have permission to perform this action.", req);
     }
 
