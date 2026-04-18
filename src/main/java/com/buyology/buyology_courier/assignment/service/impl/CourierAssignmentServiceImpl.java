@@ -325,7 +325,7 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 DeliveryRabbitMQConfig.DELIVERY_STATUS_CHANGED_KEY,
                 new DeliveryStatusChangedEvent(
                         freshOrder.getId(), freshOrder.getEcommerceOrderId(),
-                        DeliveryStatus.COURIER_ASSIGNED, selectedCourier.getId(), "SYSTEM", Instant.now()));
+                        DeliveryStatus.COURIER_ASSIGNED, selectedCourier.getId(), null, "SYSTEM", Instant.now()));
 
         // Notify the courier: WebSocket push (shows "New order available" in mobile app)
         // + email (fallback for couriers not currently connected).
@@ -420,7 +420,7 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 new DeliveryStatusChangedEvent(
                         order.getId(), order.getEcommerceOrderId(),
                         DeliveryStatus.COURIER_ACCEPTED, assignment.getCourier().getId(),
-                        "COURIER", Instant.now()));
+                        null, "COURIER", Instant.now()));
 
         log.info("[Assignment] Accepted assignmentId={} by courierId={}",
                 assignment.getId(), assignment.getCourier().getId());

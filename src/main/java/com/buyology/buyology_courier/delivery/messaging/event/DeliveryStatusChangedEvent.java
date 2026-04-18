@@ -19,6 +19,9 @@ public record DeliveryStatusChangedEvent(
         /** Null until a courier is assigned. */
         UUID courierId,
 
+        /** Null for status transitions that have no associated proof photo. */
+        String proofImageUrl,
+
         String changedBy,
         Instant changedAt
 ) {}

@@ -246,7 +246,7 @@ public class DeliveryServiceImpl implements DeliveryService {
         order.setStatus(DeliveryStatus.PICKED_UP);
         appendHistory(order, DeliveryStatus.PICKED_UP, null, null, "COURIER",
                 "Pickup proof submitted");
-        publishStatusEvent(order, "COURIER");
+        publishStatusEvent(order, "COURIER", imageUrl);
 
         log.info("[Delivery] Pickup proof submitted deliveryId={} courierId={}", deliveryId, courierId);
         return toProofResponse(proof);
@@ -280,7 +280,7 @@ public class DeliveryServiceImpl implements DeliveryService {
         order.setActualDeliveryTime(Instant.now());
         appendHistory(order, DeliveryStatus.DELIVERED, null, null, "COURIER",
                 "Delivery proof submitted" + (deliveredTo != null ? " — received by: " + deliveredTo : ""));
-        publishStatusEvent(order, "COURIER");
+        publishStatusEvent(order, "COURIER", imageUrl);
 
         // Notify the customer asynchronously — runs on eventPublisherExecutor, never blocks the transaction
         notificationService.notifyCustomerDelivered(order);
@@ -404,6 +404,10 @@ public class DeliveryServiceImpl implements DeliveryService {
     }
 
     private void publishStatusEvent(DeliveryOrder order, String changedBy) {
+        publishStatusEvent(order, changedBy, null);
+    }
+
+    private void publishStatusEvent(DeliveryOrder order, String changedBy, String proofImageUrl) {
         UUID courierId = order.getAssignedCourier() != null
                 ? order.getAssignedCourier().getId() : null;
 
@@ -412,6 +416,7 @@ public class DeliveryServiceImpl implements DeliveryService {
                 order.getEcommerceOrderId(),
                 order.getStatus(),
                 courierId,
+                proofImageUrl,
                 changedBy,
                 Instant.now()
         );
