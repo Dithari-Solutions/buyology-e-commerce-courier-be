@@ -13,14 +13,18 @@ public record CourierAssignedEvent(
         UUID deliveryId,
         UUID ecommerceOrderId,
         UUID courierId,
+        String courierName,
+        String courierPhone,
         UUID assignmentId,
         int attemptNumber,
         Instant assignedAt,
         Instant occurredAt
 ) {
     public static CourierAssignedEvent of(UUID deliveryId, UUID ecommerceOrderId,
-                                          UUID courierId, UUID assignmentId, int attemptNumber) {
+                                          UUID courierId, String courierName, String courierPhone,
+                                          UUID assignmentId, int attemptNumber) {
         return new CourierAssignedEvent(1, deliveryId, ecommerceOrderId,
-                courierId, assignmentId, attemptNumber, Instant.now(), Instant.now());
+                courierId, courierName, courierPhone,
+                assignmentId, attemptNumber, Instant.now(), Instant.now());
     }
 }

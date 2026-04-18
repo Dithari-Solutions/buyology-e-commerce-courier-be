@@ -315,7 +315,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
                 DeliveryRabbitMQConfig.COURIER_ASSIGNED_KEY,
                 CourierAssignedEvent.of(freshOrder.getId(), freshOrder.getEcommerceOrderId(),
-                        selectedCourier.getId(), assignment.getId(), attemptNumber));
+                        selectedCourier.getId(),
+                        selectedCourier.getFirstName() + " " + selectedCourier.getLastName(),
+                        selectedCourier.getPhone(),
+                        assignment.getId(), attemptNumber));
 
         // Outbox: generic status changed event for ecommerce backend sync
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
@@ -407,7 +410,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
                 DeliveryRabbitMQConfig.ASSIGNMENT_ACCEPTED_KEY,
                 CourierAssignmentAcceptedEvent.of(order.getId(), order.getEcommerceOrderId(),
-                        assignment.getCourier().getId(), assignment.getId()));
+                        assignment.getCourier().getId(),
+                        assignment.getCourier().getFirstName() + " " + assignment.getCourier().getLastName(),
+                        assignment.getCourier().getPhone(),
+                        assignment.getId()));
 
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
                 DeliveryRabbitMQConfig.DELIVERY_STATUS_CHANGED_KEY,

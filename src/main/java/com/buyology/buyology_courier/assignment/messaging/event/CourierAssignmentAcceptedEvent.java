@@ -13,14 +13,17 @@ public record CourierAssignmentAcceptedEvent(
         UUID deliveryId,
         UUID ecommerceOrderId,
         UUID courierId,
+        String courierName,
+        String courierPhone,
         UUID assignmentId,
         Instant acceptedAt,
         Instant occurredAt
 ) {
     public static CourierAssignmentAcceptedEvent of(UUID deliveryId, UUID ecommerceOrderId,
-                                                     UUID courierId, UUID assignmentId) {
+                                                     UUID courierId, String courierName, String courierPhone,
+                                                     UUID assignmentId) {
         Instant now = Instant.now();
         return new CourierAssignmentAcceptedEvent(1, deliveryId, ecommerceOrderId,
-                courierId, assignmentId, now, now);
+                courierId, courierName, courierPhone, assignmentId, now, now);
     }
 }
