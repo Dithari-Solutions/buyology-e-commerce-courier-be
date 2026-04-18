@@ -20,7 +20,7 @@ public class FileStorageService {
     private static final Set<String> ALLOWED_CONTENT_TYPES = Set.of(
             "image/jpeg", "image/png", "image/webp"
     );
-    private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+    private static final long MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MB
 
     private final ContaboObjectService contaboObjectService;
 
