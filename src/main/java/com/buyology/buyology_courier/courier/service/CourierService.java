@@ -4,11 +4,13 @@ import com.buyology.buyology_courier.courier.domain.enums.CourierStatus;
 import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.*;
 import com.buyology.buyology_courier.courier.dto.response.CourierLocationResponse;
+import com.buyology.buyology_courier.courier.dto.response.CourierMapResponse;
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 public interface CourierService {
@@ -51,4 +53,10 @@ public interface CourierService {
     CourierLocationResponse getLatestLocation(UUID courierId);
 
     Page<CourierLocationResponse> getLocationHistory(UUID courierId, Instant from, Instant to, Pageable pageable);
+
+    /**
+     * Returns all non-deleted couriers (optionally filtered) each paired with their
+     * most-recent GPS location. Couriers with no location pings have latestLocation = null.
+     */
+    List<CourierMapResponse> getCouriersForMap(CourierStatus status, VehicleType vehicleType, Boolean isAvailable);
 }

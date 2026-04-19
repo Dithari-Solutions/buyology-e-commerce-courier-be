@@ -7,9 +7,11 @@ import com.buyology.buyology_courier.courier.domain.enums.CourierStatus;
 import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.*;
 import com.buyology.buyology_courier.courier.dto.response.CourierLocationResponse;
+import com.buyology.buyology_courier.courier.dto.response.CourierMapResponse;
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
 import com.buyology.buyology_courier.courier.service.CourierService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -28,6 +30,7 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 @RestController
@@ -77,6 +80,20 @@ public class CourierController {
     @Operation(summary = "Get courier by ID — includes profileImageUrl and drivingLicenceImageUrl")
     public CourierResponse findById(@PathVariable UUID id, Authentication authentication) {
         return courierService.findById(id);
+    }
+
+    @GetMapping("/map")
+    @PreAuthorize("hasAnyRole('ADMIN', 'COURIER_ADMIN')")
+    @Operation(summary = "Get all couriers with their latest GPS location for map display",
+            description = "Returns every non-deleted courier (filtered by optional params) paired with their " +
+                    "most-recent location ping. Couriers that have never sent a ping have latestLocation = null. " +
+                    "Designed for polling every 10 s from the admin dashboard map.")
+    public List<CourierMapResponse> getCouriersForMap(
+            @Parameter(description = "Filter by operational status") @RequestParam(required = false) CourierStatus status,
+            @Parameter(description = "Filter by vehicle type") @RequestParam(required = false) VehicleType vehicleType,
+            @Parameter(description = "Filter by availability") @RequestParam(required = false) Boolean isAvailable
+    ) {
+        return courierService.getCouriersForMap(status, vehicleType, isAvailable);
     }
 
     @GetMapping

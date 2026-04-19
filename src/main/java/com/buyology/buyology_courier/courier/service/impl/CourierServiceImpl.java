@@ -9,6 +9,7 @@ import com.buyology.buyology_courier.courier.domain.enums.CourierStatus;
 import com.buyology.buyology_courier.courier.domain.enums.VehicleType;
 import com.buyology.buyology_courier.courier.dto.request.*;
 import com.buyology.buyology_courier.courier.dto.response.CourierLocationResponse;
+import com.buyology.buyology_courier.courier.dto.response.CourierMapResponse;
 import com.buyology.buyology_courier.courier.dto.response.CourierResponse;
 import com.buyology.buyology_courier.courier.exception.CourierLocationNotFoundException;
 import com.buyology.buyology_courier.courier.exception.CourierNotActiveException;
@@ -44,7 +45,10 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -410,6 +414,40 @@ public class CourierServiceImpl implements CourierService {
             meterRegistry.counter("courier.events.publish_failures.total").increment();
             throw new RuntimeException("Failed to serialise outbox event for routing key: " + routingKey, ex);
         }
+    }
+
+    @Override
+    public List<CourierMapResponse> getCouriersForMap(
+            CourierStatus status, VehicleType vehicleType, Boolean isAvailable) {
+
+        List<Courier> couriers = courierRepository
+                .findAll(CourierSpecification.filter(status, vehicleType, isAvailable));
+
+        if (couriers.isEmpty()) return List.of();
+
+        List<UUID> ids = couriers.stream().map(Courier::getId).toList();
+
+        // Batch fetch the latest location per courier (one query via DISTINCT ON)
+        Map<UUID, CourierLocation> latestByCourier = locationRepository
+                .findLatestForCourierIds(ids)
+                .stream()
+                .collect(Collectors.toMap(loc -> loc.getCourier().getId(), loc -> loc));
+
+        return couriers.stream()
+                .map(c -> {
+                    CourierLocation loc = latestByCourier.get(c.getId());
+                    CourierMapResponse.LocationSnapshot snapshot = loc == null ? null
+                            : new CourierMapResponse.LocationSnapshot(
+                                    loc.getLatitude(), loc.getLongitude(),
+                                    loc.getHeading(), loc.getSpeed(),
+                                    loc.getAccuracyMeters(), loc.getRecordedAt());
+                    return new CourierMapResponse(
+                            c.getId(), c.getFirstName(), c.getLastName(), c.getPhone(),
+                            c.getVehicleType(), c.getStatus(), c.isAvailable(), c.getRating(),
+                            fileStorageService.getPresignedUrl(c.getProfileImageUrl()),
+                            snapshot);
+                })
+                .toList();
     }
 
     private CourierResponse withPresignedUrls(CourierResponse r) {
