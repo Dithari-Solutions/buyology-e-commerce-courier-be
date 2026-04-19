@@ -27,7 +27,8 @@ public class DeliveryRabbitMQConfig {
     public static final String DELIVERY_EXCHANGE  = "buyology.delivery.exchange";
 
     // ── Inbound routing keys (ecommerce → courier) ───────────────────────────
-    public static final String ORDER_DELIVERY_REQUESTED_KEY = "order.delivery.requested";
+    public static final String ORDER_DELIVERY_REQUESTED_KEY  = "order.delivery.requested";
+    public static final String ORDER_DELIVERY_CANCELLED_KEY  = "order.delivery.cancelled";
 
     // ── Outbound routing keys (courier → ecommerce / other consumers) ────────
     public static final String DELIVERY_STATUS_CHANGED_KEY  = "delivery.status.changed";
@@ -48,7 +49,8 @@ public class DeliveryRabbitMQConfig {
     public static final String LOCATION_UPDATED_KEY         = "delivery.location.updated";
 
     // ── Queue names ───────────────────────────────────────────────────────────
-    public static final String DELIVERY_ORDER_RECEIVED_QUEUE   = "delivery.order.received.queue";
+    public static final String DELIVERY_ORDER_RECEIVED_QUEUE    = "delivery.order.received.queue";
+    public static final String ORDER_DELIVERY_CANCELLED_QUEUE   = "order.delivery.cancelled.queue";
 
     // Outbound queues — consumed by ecommerce backend (or any subscriber).
     // Declared here so messages are never returned as unroutable even when
@@ -87,6 +89,19 @@ public class DeliveryRabbitMQConfig {
                 .bind(deliveryOrderReceivedQueue())
                 .to(ecommerceExchange())
                 .with(ORDER_DELIVERY_REQUESTED_KEY);
+    }
+
+    @Bean
+    Queue orderDeliveryCancelledQueue() {
+        return withDlx(ORDER_DELIVERY_CANCELLED_QUEUE);
+    }
+
+    @Bean
+    Binding orderDeliveryCancelledBinding() {
+        return BindingBuilder
+                .bind(orderDeliveryCancelledQueue())
+                .to(ecommerceExchange())
+                .with(ORDER_DELIVERY_CANCELLED_KEY);
     }
 
     // ── Outbound queues & bindings ────────────────────────────────────────────

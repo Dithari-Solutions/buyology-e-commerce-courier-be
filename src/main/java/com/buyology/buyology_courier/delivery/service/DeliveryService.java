@@ -76,6 +76,13 @@ public interface DeliveryService {
      */
     DeliveryOrderResponse cancel(UUID deliveryId, CancelDeliveryRequest request);
 
+    /**
+     * Cancels a delivery by ecommerce order ID. Called when the ecommerce backend
+     * publishes an {@code order.delivery.cancelled} event. No-op if no delivery
+     * exists or the delivery is already in a terminal state.
+     */
+    void cancelByEcommerceOrderId(UUID ecommerceOrderId, String reason);
+
     List<DeliveryStatusHistoryResponse> getStatusHistory(UUID deliveryId);
 
     /**

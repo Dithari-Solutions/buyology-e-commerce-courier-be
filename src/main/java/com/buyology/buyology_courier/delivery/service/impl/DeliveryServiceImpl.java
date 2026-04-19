@@ -213,11 +213,34 @@ public class DeliveryServiceImpl implements DeliveryService {
         appendHistory(order, DeliveryStatus.CANCELLED, null, null, "SYSTEM", request.reason());
         publishStatusEvent(order, "SYSTEM");
 
-        // Notify the assigned courier (if any) via FCM push + email so they stop the job immediately
         notificationService.notifyCourierCancelled(order, request.reason());
 
         log.info("[Delivery] Cancelled deliveryId={} reason='{}'", deliveryId, request.reason());
         return toResponse(order);
+    }
+
+    @Override
+    @Transactional
+    public void cancelByEcommerceOrderId(UUID ecommerceOrderId, String reason) {
+        deliveryOrderRepository.findByEcommerceOrderId(ecommerceOrderId).ifPresentOrElse(order -> {
+            if (TERMINAL_STATUSES.contains(order.getStatus())) {
+                log.info("[Delivery] cancelByEcommerceOrderId skipped — already terminal: ecommerceOrderId={} status={}",
+                        ecommerceOrderId, order.getStatus());
+                return;
+            }
+
+            order.setStatus(DeliveryStatus.CANCELLED);
+            order.setCancelledReason(reason);
+
+            appendHistory(order, DeliveryStatus.CANCELLED, null, null, "ECOMMERCE", reason);
+            publishStatusEvent(order, "ECOMMERCE");
+
+            notificationService.notifyCourierCancelled(order, reason);
+
+            log.info("[Delivery] Cancelled by ecommerce — ecommerceOrderId={} deliveryId={} reason='{}'",
+                    ecommerceOrderId, order.getId(), reason);
+        }, () -> log.warn("[Delivery] cancelByEcommerceOrderId — no delivery found for ecommerceOrderId={}",
+                ecommerceOrderId));
     }
 
     /**
