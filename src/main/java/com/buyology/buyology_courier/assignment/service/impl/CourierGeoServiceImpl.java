@@ -51,13 +51,14 @@ public class CourierGeoServiceImpl implements CourierGeoService {
     }
 
     @Override
-    public List<UUID> findNearby(double lat, double lng, double radiusKm) {
+    public List<NearbyCourier> findNearby(double lat, double lng, double radiusKm) {
         try {
             GeoResults<RedisGeoCommands.GeoLocation<String>> results =
                     stringRedisTemplate.opsForGeo().radius(
                             GEO_KEY,
                             new Circle(new Point(lng, lat), new Distance(radiusKm, Metrics.KILOMETERS)),
                             RedisGeoCommands.GeoRadiusCommandArgs.newGeoRadiusArgs()
+                                    .includeDistance()
                                     .sortAscending()
                                     .limit(MAX_GEO_RESULTS)
                     );
@@ -65,7 +66,9 @@ public class CourierGeoServiceImpl implements CourierGeoService {
             if (results == null) return Collections.emptyList();
 
             return results.getContent().stream()
-                    .map(r -> UUID.fromString(r.getContent().getName()))
+                    .map(r -> new NearbyCourier(
+                            UUID.fromString(r.getContent().getName()),
+                            r.getDistance().getValue()))
                     .toList();
 
         } catch (Exception ex) {

@@ -49,7 +49,6 @@ import org.springframework.transaction.event.TransactionalEventListener;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -78,8 +77,9 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
      * Grace period in seconds — skip orders younger than this when scanning on
      * courier-available events to avoid racing with the in-flight async assignment
      * that fires right after order ingest.
+     * Reduced to 5s to be more responsive in local testing / dev.
      */
-    private static final int GRACE_SECONDS = 20;
+    private static final int GRACE_SECONDS = 5;
 
     /**
      * Radius tiers searched in order (km).
@@ -197,25 +197,40 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         for (double radius : RADIUS_TIERS_KM) {
             boolean isLongDistance = radius >= LONG_DISTANCE_RADIUS_KM;
 
-            List<UUID> nearbyIds = courierGeoService.findNearby(pickupLat, pickupLng, radius);
-            if (nearbyIds.isEmpty()) continue;
+            List<CourierGeoService.NearbyCourier> nearby = courierGeoService.findNearby(pickupLat, pickupLng, radius);
+            if (nearby.isEmpty()) {
+                log.debug("[Assignment] No couriers in GEO index within {}km for deliveryId={}", radius, order.getId());
+                continue;
+            }
 
             // Remove couriers who already rejected for this delivery
-            List<UUID> candidateIds = nearbyIds.stream()
-                    .filter(id -> !excludedCourierIds.contains(id))
+            List<CourierGeoService.NearbyCourier> candidates = nearby.stream()
+                    .filter(c -> !excludedCourierIds.contains(c.courierId()))
                     .toList();
-            if (candidateIds.isEmpty()) continue;
+            if (candidates.isEmpty()) {
+                log.debug("[Assignment] All {} couriers within {}km already excluded for deliveryId={}",
+                        nearby.size(), radius, order.getId());
+                continue;
+            }
+
+            List<UUID> candidateIds = candidates.stream().map(CourierGeoService.NearbyCourier::courierId).toList();
 
             // DB authoritative filter: ACTIVE + available + not deleted
             List<Courier> dbCandidates = courierRepository
                     .findByIdInAndStatusAndIsAvailableTrueAndDeletedAtIsNull(
                             candidateIds, CourierStatus.ACTIVE);
 
-            if (dbCandidates.isEmpty()) continue;
+            if (dbCandidates.isEmpty()) {
+                log.debug("[Assignment] No candidate in {}km is ACTIVE and available for deliveryId={}",
+                        radius, order.getId());
+                continue;
+            }
 
-            // Preserve GEO proximity order using a lookup map
+            // Preserve GEO proximity order using a lookup maps
             Map<UUID, Courier> courierMap = dbCandidates.stream()
                     .collect(Collectors.toMap(Courier::getId, c -> c));
+            Map<UUID, Double> distanceMap = candidates.stream()
+                    .collect(Collectors.toMap(CourierGeoService.NearbyCourier::courierId, CourierGeoService.NearbyCourier::distanceKm));
 
             // Walk candidates in GEO distance order (nearest first)
             for (UUID candidateId : candidateIds) {
@@ -224,27 +239,26 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
                 // Skip couriers who already have a PENDING assignment or an active delivery.
                 if (assignmentRepository.existsByCourierAndStatus(courier, AssignmentStatus.PENDING)) {
+                    log.debug("[Assignment] Courier {} has PENDING assignment — skipping for deliveryId={}",
+                            candidateId, order.getId());
                     continue;
                 }
                 if (deliveryOrderRepository.findFirstByAssignedCourierIdAndStatusIn(
                         courier.getId(), ACTIVE_DELIVERY_STATUSES).isPresent()) {
+                    log.debug("[Assignment] Courier {} has active delivery — skipping for deliveryId={}",
+                            candidateId, order.getId());
                     continue;
                 }
 
                 double speed = courier.getVehicleType().speedKmh();
-
-                // We need the courier's latest known position; use a placeholder
-                // lat/lng from the GEO index — for time estimation we approximate
-                // using straight-line distance already sorted by GEO.
-                // Exact courier lat/lng is not exposed by findNearby; we estimate
-                // total trip as: (courier→pickup estimated by radius tier midpoint) + (pickup→dropoff).
-                // For the first tier (5 km) we use an upper-bound of 5 km for courier leg.
-                double courierToPickupEstimate = radius; // conservative upper bound
+                double courierToPickup = distanceMap.get(candidateId);
                 double pickupToDropoff = HaversineUtil.distanceKm(pickupLat, pickupLng, dropoffLat, dropoffLng);
                 double totalEstimatedMinutes = HaversineUtil.travelTimeMinutes(
-                        courierToPickupEstimate + pickupToDropoff, speed);
+                        courierToPickup + pickupToDropoff, speed);
 
                 if (!isLongDistance && totalEstimatedMinutes > MAX_DELIVERY_MINUTES) {
+                    log.debug("[Assignment] Courier {} is too slow ({}) or far away (est {} min) for deliveryId={}",
+                            candidateId, courier.getVehicleType(), totalEstimatedMinutes, order.getId());
                     continue; // over 30 min — skip
                 }
 
@@ -274,7 +288,6 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         if (freshOrder == null) return;
 
         // Idempotency: only proceed if still in CREATED status.
-        // If it's already COURIER_ASSIGNED, another assignment attempt is in flight or won.
         if (freshOrder.getStatus() != DeliveryStatus.CREATED) {
             log.info("[Assignment] Skipping — deliveryId={} status={} (expected CREATED)",
                     freshOrder.getId(), freshOrder.getStatus());
@@ -291,8 +304,7 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                 .build();
         assignment = assignmentRepository.save(assignment);
 
-        // Mark the courier as unavailable so concurrent scans don't double-assign them
-        // to another order while this PENDING assignment is still open.
+        // Mark the courier as unavailable
         selectedCourier.setAvailable(false);
         courierRepository.save(selectedCourier);
         courierGeoService.remove(selectedCourier.getId());
@@ -327,13 +339,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                         freshOrder.getId(), freshOrder.getEcommerceOrderId(),
                         DeliveryStatus.COURIER_ASSIGNED, selectedCourier.getId(), null, "SYSTEM", Instant.now()));
 
-        // Notify the courier: WebSocket push (shows "New order available" in mobile app)
-        // + email (fallback for couriers not currently connected).
-        // Triggered async AFTER this transaction commits via CourierAssignedApplicationEvent.
+        // Notify the courier
         eventPublisher.publishEvent(CourierAssignedApplicationEvent.of(selectedCourier, assignment, freshOrder));
 
-        // Notify the customer via email that their courier has been assigned.
-        // Runs on eventPublisherExecutor — never blocks this transaction.
+        // Notify the customer
         final int finalEstimatedMinutes = (int) Math.ceil(estimatedMinutes);
         final String courierFullName = selectedCourier.getFirstName() + " " + selectedCourier.getLastName();
         final String courierPhone = selectedCourier.getPhone();
@@ -347,10 +356,6 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
     // ── Listeners ─────────────────────────────────────────────────────────────
 
-    /**
-     * Sends push notifications and emails to the courier after an assignment
-     * transaction has committed. Runs on the async thread pool.
-     */
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
     @Async("eventPublisherExecutor")
     public void onCourierAssigned(CourierAssignedApplicationEvent event) {
@@ -368,7 +373,6 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         CourierAssignment assignment = assignmentRepository.findById(assignmentId)
                 .orElseThrow(() -> new AssignmentNotFoundException(assignmentId));
 
-        // Security: ensure the authenticated courier owns this assignment
         if (!courierId.equals(assignment.getCourier().getId())) {
             throw new org.springframework.security.access.AccessDeniedException(
                     "You are not assigned to this delivery.");
@@ -435,14 +439,10 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
         DeliveryOrder order = assignment.getDelivery();
 
-        // Courier rejected — restore their availability so they can receive future assignments.
-        // GEO index entry will be restored automatically on the courier's next location ping.
         Courier rejector = assignment.getCourier();
         rejector.setAvailable(true);
         courierRepository.save(rejector);
 
-        // Clear the current courier from the order entity so it's "unassigned"
-        // while we wait for the next attempt or if we exhaust all attempts.
         order.setAssignedCourier(null);
 
         saveOutboxEvent(DeliveryRabbitMQConfig.DELIVERY_EXCHANGE,
@@ -454,11 +454,9 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
         int totalAttempts = assignmentRepository.countByDelivery(order);
 
         if (totalAttempts < MAX_ASSIGNMENT_ATTEMPTS) {
-            // Revert status to CREATED so it's eligible for reassignment logic
             order.setStatus(DeliveryStatus.CREATED);
             deliveryOrderRepository.save(order);
 
-            // Collect all rejected courier IDs for this delivery
             Set<UUID> excludedIds = assignmentRepository
                     .findByDeliveryOrderByAttemptNumberDesc(order)
                     .stream()
@@ -466,14 +464,12 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
                     .map(a -> a.getCourier().getId())
                     .collect(Collectors.toSet());
 
-            // Trigger reassignment AFTER this transaction commits
             eventPublisher.publishEvent(
                     new ReassignApplicationEvent(order.getId(), totalAttempts + 1, excludedIds));
 
             log.info("[Assignment] Rejected assignmentId={} by courierId={}, triggering reassignment attempt={}",
                     assignment.getId(), assignment.getCourier().getId(), totalAttempts + 1);
         } else {
-            // All attempts exhausted — mark order as FAILED and alert admins
             order.setStatus(DeliveryStatus.FAILED);
             deliveryOrderRepository.save(order);
 
@@ -511,11 +507,6 @@ public class CourierAssignmentServiceImpl implements CourierAssignmentService {
 
     // ── Pending poll ──────────────────────────────────────────────────────────
 
-    /**
-     * Returns the courier's current PENDING assignment, or empty if none.
-     * The app calls this on startup and after WebSocket reconnect so it can recover
-     * any offer that was pushed while the device was offline or the connection dropped.
-     */
     @Override
     @Transactional(readOnly = true)
     public Optional<AssignmentResponse> getPendingAssignment(UUID courierId) {

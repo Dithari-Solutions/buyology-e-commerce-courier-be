@@ -35,7 +35,7 @@ import java.util.stream.Collectors;
 public class StaleOrderRetryJob {
 
     /** Grace period — skip orders younger than this to avoid double-assignment. */
-    private static final int GRACE_SECONDS = 20;
+    private static final int GRACE_SECONDS = 5;
 
     private final DeliveryOrderRepository    deliveryOrderRepository;
     private final CourierAssignmentService   assignmentService;
