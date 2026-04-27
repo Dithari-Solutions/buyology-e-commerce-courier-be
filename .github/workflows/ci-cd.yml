@@ -240,20 +240,26 @@ jobs:
             # Give Spring Boot + Flyway migrations time to complete
             sleep 40
 
-            # ── Readiness probe (max 120s) ─────────────────────────────────────
-            echo "Waiting for courier readiness..."
-            for i in $(seq 1 24); do
-              HTTP=$(curl -s -o /dev/null -w "%{http_code}" -m 10 http://localhost:8081/ 2>/dev/null)
-              if [ -n "$HTTP" ] && [ "$HTTP" != "000" ]; then
+            # ── Readiness probe (max 150s) ─────────────────────────────────────
+            echo "Waiting for courier readiness (this can take up to 3 minutes)..."
+            for i in $(seq 1 30); do
+              # || echo "000" prevents set -e from killing the script on network errors (like status 56)
+              HTTP=$(curl -s -o /dev/null -w "%{http_code}" -m 10 http://localhost:8081/ || echo "000")
+              
+              # Any valid HTTP response (including 401 Unauthorized for protected routes) 
+              # indicates that the Spring Boot application is up and listening.
+              if [ "$HTTP" != "000" ]; then
                 echo "  Deploy successful — courier is responding (HTTP $HTTP)."
                 break
               fi
-              if [ "$i" = "24" ]; then
-                echo "ERROR: Courier did not become ready in 120s (last HTTP: $HTTP)."
-                docker compose logs --tail=80 courier
+              
+              if [ "$i" = "30" ]; then
+                echo "ERROR: Courier did not become ready in 150s."
+                docker compose logs --tail=100 courier
                 exit 1
               fi
-              echo "  attempt $i/24: HTTP $HTTP"
+              
+              echo "  attempt $i/30: service not ready yet... (HTTP $HTTP)"
               sleep 5
             done
 
