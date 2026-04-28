@@ -28,6 +28,11 @@ import java.util.List;
  * claim (the courier UUID). This allows the server to push to
  * {@code /user/{courierId}/queue/assignments} via
  * {@code SimpMessagingTemplate.convertAndSendToUser(courierId, "/queue/assignments", payload)}.
+ *
+ * <p>On auth failure the CONNECT message is passed through without setting a user
+ * principal. The client receives CONNECTED but cannot receive any user-addressed
+ * messages because no principal is set. This avoids a silent WebSocket close
+ * (code 1011) that would occur if an exception were thrown inside the interceptor.
  */
 @Component
 @Slf4j
@@ -50,9 +55,8 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
 
         String authHeader = accessor.getFirstNativeHeader("Authorization");
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
-            log.warn("[WS-AUTH] CONNECT without Authorization header — connection rejected");
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Missing or invalid Authorization header on STOMP CONNECT");
+            log.warn("[WS-AUTH] CONNECT without Authorization header — no principal set");
+            return message;
         }
 
         String token = authHeader.substring(7).trim();
@@ -68,9 +72,7 @@ public class WebSocketAuthChannelInterceptor implements ChannelInterceptor {
             accessor.setUser(auth);
             log.info("[WS-AUTH] STOMP CONNECT authenticated courierId={}", courierId);
         } catch (JwtException ex) {
-            log.warn("[WS-AUTH] Invalid JWT on STOMP CONNECT — {}", ex.getMessage());
-            throw new org.springframework.security.access.AccessDeniedException(
-                    "Invalid or expired courier token: " + ex.getMessage());
+            log.warn("[WS-AUTH] Invalid JWT on STOMP CONNECT — {} — no principal set", ex.getMessage());
         }
 
         return message;
