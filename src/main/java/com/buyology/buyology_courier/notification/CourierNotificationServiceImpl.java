@@ -1,7 +1,7 @@
 package com.buyology.buyology_courier.notification;
 
 import com.buyology.buyology_courier.assignment.domain.CourierAssignment;
-import com.buyology.buyology_courier.config.TwilioSendGridProperties;
+import com.buyology.buyology_courier.config.AwsSesProperties;
 import com.buyology.buyology_courier.courier.domain.Courier;
 import com.buyology.buyology_courier.courier.repository.CourierRepository;
 import com.buyology.buyology_courier.delivery.domain.DeliveryOrder;
@@ -10,13 +10,6 @@ import com.google.firebase.messaging.FirebaseMessagingException;
 import com.google.firebase.messaging.Message;
 import com.google.firebase.messaging.MessagingErrorCode;
 import com.google.firebase.messaging.Notification;
-import com.sendgrid.Method;
-import com.sendgrid.Request;
-import com.sendgrid.Response;
-import com.sendgrid.SendGrid;
-import com.sendgrid.helpers.mail.Mail;
-import com.sendgrid.helpers.mail.objects.Content;
-import com.sendgrid.helpers.mail.objects.Email;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,14 +17,19 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-
-import java.io.IOException;
+import software.amazon.awssdk.services.sesv2.SesV2Client;
+import software.amazon.awssdk.services.sesv2.model.Body;
+import software.amazon.awssdk.services.sesv2.model.Content;
+import software.amazon.awssdk.services.sesv2.model.Destination;
+import software.amazon.awssdk.services.sesv2.model.EmailContent;
+import software.amazon.awssdk.services.sesv2.model.SendEmailRequest;
+import software.amazon.awssdk.services.sesv2.model.SesV2Exception;
 
 /**
  * Delivers new-assignment notifications via:
  * <ul>
  *   <li>WebSocket/STOMP push — shows "New order available" instantly in the mobile app</li>
- *   <li>Twilio SendGrid email — backup for couriers not actively connected</li>
+ *   <li>AWS SES email — backup for couriers not actively connected</li>
  * </ul>
  *
  * <p>Both channels run on the {@code eventPublisherExecutor} thread pool so they
@@ -45,13 +43,17 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
     /** STOMP destination suffix — Spring prepends {@code /user/{courierId}}. */
     private static final String ASSIGNMENT_QUEUE = "/queue/assignments";
 
-    private final SimpMessagingTemplate     messagingTemplate;
-    private final TwilioSendGridProperties  sendGridProps;
-    private final CourierRepository         courierRepository;
+    private final SimpMessagingTemplate messagingTemplate;
+    private final AwsSesProperties      sesProps;
+    private final CourierRepository     courierRepository;
 
     /** Null when {@code firebase.enabled=false} — FCM pushes are skipped gracefully. */
     @Autowired(required = false)
     private FirebaseMessaging firebaseMessaging;
+
+    /** Null when {@code notification.email.enabled=false} — emails are skipped gracefully. */
+    @Autowired(required = false)
+    private SesV2Client sesClient;
 
     @Value("${notification.email.enabled:false}")
     private boolean emailEnabled;
@@ -213,38 +215,24 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
         }
     }
 
-    // ── SendGrid email ────────────────────────────────────────────────────────
+    // ── AWS SES email ─────────────────────────────────────────────────────────
 
     private void sendEmail(Courier courier, CourierAssignment assignment, DeliveryOrder order) {
         if (courier.getEmail() == null || courier.getEmail().isBlank()) {
             log.debug("[Notification] No email on courierId={} — skipping email", courier.getId());
             return;
         }
-
-        try {
-            Email from    = new Email(sendGridProps.getFromEmail(), sendGridProps.getFromName());
-            Email to      = new Email(courier.getEmail());
-            Content content = new Content("text/html", buildEmailBody(courier, assignment, order));
-            Mail mail     = new Mail(from, "New delivery order available — Buyology Courier", to, content);
-
-            SendGrid sg = new SendGrid(sendGridProps.getApiKey());
-            Request request = new Request();
-            request.setMethod(Method.POST);
-            request.setEndpoint("mail/send");
-            request.setBody(mail.build());
-
-            Response response = sg.api(request);
-
-            if (response.getStatusCode() >= 400) {
-                log.error("[Notification] SendGrid error {} sending to courierId={} email={}: {}",
-                        response.getStatusCode(), courier.getId(), courier.getEmail(), response.getBody());
-            } else {
-                log.info("[Notification] Email sent via SendGrid courierId={} to={} assignmentId={}",
-                        courier.getId(), courier.getEmail(), assignment.getId());
-            }
-        } catch (IOException ex) {
-            log.error("[Notification] Email failed courierId={} to={} — {}",
-                    courier.getId(), courier.getEmail(), ex.getMessage());
+        boolean ok = sendSesEmail(
+                courier.getEmail(),
+                "New delivery order available — Buyology Courier",
+                buildEmailBody(courier, assignment, order)
+        );
+        if (ok) {
+            log.info("[Notification] Email sent via SES courierId={} to={} assignmentId={}",
+                    courier.getId(), courier.getEmail(), assignment.getId());
+        } else {
+            log.error("[Notification] SES send failed courierId={} to={}",
+                    courier.getId(), courier.getEmail());
         }
     }
 
@@ -252,28 +240,51 @@ public class CourierNotificationServiceImpl implements CourierNotificationServic
 
     private void sendCustomerEmail(String toAddress, String customerName,
                                    String subject, String htmlBody) {
+        boolean ok = sendSesEmail(toAddress, subject, htmlBody);
+        if (ok) {
+            log.info("[Notification] Customer email sent to={} subject='{}'", toAddress, subject);
+        } else {
+            log.error("[Notification] Customer email failed to={} subject='{}'", toAddress, subject);
+        }
+    }
+
+    /**
+     * Low-level SES send. Returns {@code true} on success, {@code false} otherwise
+     * (failures are logged but never propagated — email is a best-effort channel).
+     */
+    private boolean sendSesEmail(String toAddress, String subject, String htmlBody) {
+        if (sesClient == null) {
+            log.debug("[Notification] SES disabled (notification.email.enabled=false) — skipping email to={}", toAddress);
+            return false;
+        }
+        String fromAddress = (sesProps.getFromName() != null && !sesProps.getFromName().isBlank())
+                ? sesProps.getFromName() + " <" + sesProps.getFromEmail() + ">"
+                : sesProps.getFromEmail();
+
+        EmailContent content = EmailContent.builder()
+                .simple(software.amazon.awssdk.services.sesv2.model.Message.builder()
+                        .subject(Content.builder().data(subject).charset("UTF-8").build())
+                        .body(Body.builder()
+                                .html(Content.builder().data(htmlBody).charset("UTF-8").build())
+                                .build())
+                        .build())
+                .build();
+
+        SendEmailRequest.Builder req = SendEmailRequest.builder()
+                .fromEmailAddress(fromAddress)
+                .destination(Destination.builder().toAddresses(toAddress).build())
+                .content(content);
+
+        if (sesProps.getConfigurationSet() != null && !sesProps.getConfigurationSet().isBlank()) {
+            req.configurationSetName(sesProps.getConfigurationSet());
+        }
+
         try {
-            Email from    = new Email(sendGridProps.getFromEmail(), sendGridProps.getFromName());
-            Email to      = new Email(toAddress);
-            Content content = new Content("text/html", htmlBody);
-            Mail mail     = new Mail(from, subject, to, content);
-
-            SendGrid sg = new SendGrid(sendGridProps.getApiKey());
-            Request request = new Request();
-            request.setMethod(Method.POST);
-            request.setEndpoint("mail/send");
-            request.setBody(mail.build());
-
-            Response response = sg.api(request);
-
-            if (response.getStatusCode() >= 400) {
-                log.error("[Notification] SendGrid error {} sending customer email to={}: {}",
-                        response.getStatusCode(), toAddress, response.getBody());
-            } else {
-                log.info("[Notification] Customer email sent to={} subject='{}'", toAddress, subject);
-            }
-        } catch (IOException ex) {
-            log.error("[Notification] Customer email failed to={} — {}", toAddress, ex.getMessage());
+            sesClient.sendEmail(req.build());
+            return true;
+        } catch (SesV2Exception ex) {
+            log.error("[Notification] SES error to={} — {}", toAddress, ex.awsErrorDetails().errorMessage());
+            return false;
         }
     }
 
